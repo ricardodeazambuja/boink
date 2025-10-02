@@ -320,8 +320,8 @@
                     return;
                 }
 
-                // Start screen
-                if (gameState === 'start') {
+                // Start screen - don't allow if settings are open
+                if (gameState === 'start' && !showSettings) {
                     // Pre-warm Tone.js on start screen interaction
                     if (soundEnabled) {
                     Tone.start().then(() => {
@@ -336,16 +336,22 @@
                     return;
                 }
 
-                // Game over screen
-                if (gameState === 'gameover') {
+                // Game over screen - don't allow if settings are open
+                if (gameState === 'gameover' && !showSettings) {
                     setGameState('start');
                     stopBackgroundMusic();
                     return;
                 }
 
-                // Playing - ball interaction
-                if (gameState === 'playing') {
+                // Playing - ball interaction (ONLY if we're actually playing)
+                if (gameState === 'playing' && !showSettings) {
                     const ball = ballRef.current;
+                    
+                    // Don't allow hits if ball is already below screen
+                    if (ball.y > canvas.height + ball.radius) {
+                    return;
+                    }
+                    
                     const dx = canvasX - ball.x;
                     const dy = canvasY - ball.y;
                     const dist = Math.sqrt(dx * dx + dy * dy);
