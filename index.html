@@ -26,6 +26,10 @@
             const [hitZone, setHitZone] = useState(() => parseInt(localStorage.getItem('bounceGameHitZone') || '90', 10));
             const [soundEnabled, setSoundEnabled] = useState(() => localStorage.getItem('bounceGameSound') !== 'false');
 
+            // --- IOS AUDIO FIX ---
+            // State to track if the user has interacted, which is necessary to unlock audio on iOS.
+            const [audioUnlocked, setAudioUnlocked] = useState(false);
+
             const gameLogicRefs = useRef({}).current;
             gameLogicRefs.gameState = gameState;
             gameLogicRefs.soundEnabled = soundEnabled;
@@ -39,8 +43,7 @@
             const ballRef = useRef({ x: 200, y: 100, vx: 0, vy: 0, radius: 30 });
             const particlesRef = useRef([]);
             const isDraggingRef = useRef(null);
-            const audioInitializedRef = useRef(false);
-
+            
             const hitSynthRef = useRef(null);
             const musicSynthRef = useRef(null);
             const musicPartsRef = useRef(null);
@@ -54,8 +57,23 @@
                 soundToggle: { x: 150, y: 390, width: 100, height: 40 }
             });
 
+            // --- IOS AUDIO FIX ---
+            // This function is now called ONLY after the user's first tap.
+            const initializeAudio = useCallback(() => {
+                if (hitSynthRef.current) return; // Already initialized
+                
+                console.log('Initializing audio synths...');
+                hitSynthRef.current = new Tone.Synth({ oscillator: { type: 'sine' }, envelope: { attack: 0.005, decay: 0.1, sustain: 0, release: 0.1 } }).toDestination();
+                musicSynthRef.current = new Tone.PolySynth(Tone.Synth, { oscillator: { type: 'triangle' }, envelope: { attack: 0.005, decay: 0.1, sustain: 0.4, release: 0.2 }, volume: -8 }).toDestination();
+                console.log('Audio synths ready.');
+            }, []);
+
             const playHitSound = useCallback(() => {
                 if (!gameLogicRefs.soundEnabled || !hitSynthRef.current) return;
+                // Add a fallback to resume context, just in case.
+                if (Tone.context.state === 'suspended') {
+                    Tone.context.resume();
+                }
                 hitSynthRef.current.triggerAttackRelease('C6', '16n');
             }, []);
 
@@ -69,11 +87,13 @@
             }, []);
 
             const startBackgroundMusic = useCallback(() => {
-                if (!gameLogicRefs.soundEnabled || musicPartsRef.current || Tone.Transport.state === 'started') return;
+                if (!gameLogicRefs.soundEnabled || !musicSynthRef.current || musicPartsRef.current || Tone.Transport.state === 'started') return;
                 try {
-                    if (!musicSynthRef.current) {
-                        musicSynthRef.current = new Tone.PolySynth(Tone.Synth, { oscillator: { type: 'triangle' }, envelope: { attack: 0.005, decay: 0.1, sustain: 0.4, release: 0.2 }, volume: -8 }).toDestination();
+                    // Add a fallback to resume context, just in case.
+                    if (Tone.context.state === 'suspended') {
+                        Tone.context.resume();
                     }
+
                     const bass = new Tone.Synth({ oscillator: { type: 'sawtooth' }, envelope: { attack: 0.01, decay: 0.2, sustain: 0.4, release: 0.3 }, volume: -12 }).toDestination();
                     const melody = [ { note: 'E5', time: '0:0:0', duration: '16n' }, { note: 'G5', time: '0:0:1', duration: '16n' }, { note: 'A5', time: '0:0:2', duration: '16n' }, { note: 'B5', time: '0:0:3', duration: '16n' }, { note: 'E6', time: '0:1:0', duration: '8n' }, { note: 'D6', time: '0:1:2', duration: '8n' }, { note: 'B5', time: '0:2:0', duration: '8n' }, { note: 'G5', time: '0:2:2', duration: '16n' }, { note: 'A5', time: '0:2:3', duration: '16n' }, { note: 'B5', time: '0:3:0', duration: '8n' }, { note: 'A5', time: '0:3:2', duration: '16n' }, { note: 'G5', time: '0:3:3', duration: '16n' }, { note: 'E5', time: '1:0:0', duration: '16n' }, { note: 'G5', time: '1:0:1', duration: '16n' }, { note: 'B5', time: '1:0:2', duration: '8n' }, { note: 'D6', time: '1:1:0', duration: '8n' }, { note: 'E6', time: '1:1:2', duration: '16n' }, { note: 'D6', time: '1:1:3', duration: '16n' }, { note: 'B5', time: '1:2:0', duration: '8n' }, { note: 'A5', time: '1:2:2', duration: '8n' }, { note: 'G5', time: '1:3:0', duration: '4n' } ];
                     const melodyPart = new Tone.Part((time, note) => { musicSynthRef.current.triggerAttackRelease(note.note, note.duration, time); }, melody).start(0);
@@ -86,6 +106,20 @@
                 } catch (error) { console.error('Error starting audio:', error); }
             }, []);
 
+            // --- IOS AUDIO FIX ---
+            // This handler is ONLY for the first tap to unlock the audio context.
+            const handleAudioUnlock = async () => {
+                if (audioUnlocked) return;
+                try {
+                    await Tone.start();
+                    console.log("Audio unlocked successfully!");
+                    initializeAudio();
+                    setAudioUnlocked(true);
+                } catch (e) {
+                    console.error("Could not start audio context:", e);
+                }
+            };
+            
             useEffect(() => {
                 const canvas = canvasRef.current;
                 const ctx = canvas.getContext('2d');
@@ -95,33 +129,8 @@
                 let animationId;
                 let gameOverTriggered = false;
 
-                if (!hitSynthRef.current) {
-                    hitSynthRef.current = new Tone.Synth({ oscillator: { type: 'sine' }, envelope: { attack: 0.005, decay: 0.1, sustain: 0, release: 0.1 } }).toDestination();
-                }
-
-                const unlockAudio = () => {
-                    if (!audioInitializedRef.current) {
-                        Tone.start();
-                        audioInitializedRef.current = true;
-                        console.log('Audio Context unlocked and ready.');
-                    }
-                    document.removeEventListener('mousedown', unlockAudio);
-                    document.removeEventListener('touchstart', unlockAudio);
-                };
-                document.addEventListener('mousedown', unlockAudio);
-                document.addEventListener('touchstart', unlockAudio);
-
-                const createSparkles = (x, y, count) => {
-                    for (let i = 0; i < count; i++) {
-                        const angle = (Math.PI * 2 * i) / count + Math.random() * 0.5;
-                        const speed = 2 + Math.random() * 3;
-                        particlesRef.current.push({ x, y, vx: Math.cos(angle) * speed, vy: Math.sin(angle) * speed, life: 1, size: 2 + Math.random() * 3, color: `hsl(${Math.random() * 60 + 40}, 100%, 70%)` });
-                    }
-                };
-
-                const isPointInRect = (px, py, x, y, width, height) => {
-                    return px >= x && px <= x + width && py >= y && py <= y + height;
-                };
+                const createSparkles = (x, y, count) => { for (let i = 0; i < count; i++) { const angle = (Math.PI * 2 * i) / count + Math.random() * 0.5; const speed = 2 + Math.random() * 3; particlesRef.current.push({ x, y, vx: Math.cos(angle) * speed, vy: Math.sin(angle) * speed, life: 1, size: 2 + Math.random() * 3, color: `hsl(${Math.random() * 60 + 40}, 100%, 70%)` }); } };
+                const isPointInRect = (px, py, x, y, width, height) => { return px >= x && px <= x + width && py >= y && py <= y + height; };
 
                 const handlePointerDown = (e) => {
                     e.preventDefault();
@@ -130,91 +139,37 @@
                     const canvasX = ((e.clientX || e.touches[0].clientX) - rect.left) * (canvas.width / rect.width);
                     const canvasY = ((e.clientY || e.touches[0].clientY) - rect.top) * (canvas.height / rect.height);
                     
-                    if (gameLogicRefs.gameState !== 'playing' && isPointInRect(canvasX, canvasY, 350, 10, 40, 40)) {
-                        setShowSettings(s => !s);
-                        return;
-                    }
-
+                    if (gameLogicRefs.gameState !== 'playing' && isPointInRect(canvasX, canvasY, 350, 10, 40, 40)) { setShowSettings(s => !s); return; }
                     if (gameLogicRefs.showSettings) {
                         const soundToggle = settingsRef.current.soundToggle;
-                        if (isPointInRect(canvasX, canvasY, soundToggle.x, soundToggle.y, soundToggle.width, soundToggle.height)) {
-                            const newValue = !gameLogicRefs.soundEnabled;
-                            setSoundEnabled(newValue);
-                            localStorage.setItem('bounceGameSound', newValue.toString());
-                            if (!newValue) stopBackgroundMusic();
-                            return;
-                        }
-
-                        for (const [key, slider] of Object.entries(settingsRef.current.sliders)) {
-                             if (isPointInRect(canvasX, canvasY, slider.x - 12, slider.y - 12, slider.width + 24, 30)) {
-                                isDraggingRef.current = key;
-                                handlePointerMove(e);
-                                return;
-                            }
-                        }
+                        if (isPointInRect(canvasX, canvasY, soundToggle.x, soundToggle.y, soundToggle.width, soundToggle.height)) { const newValue = !gameLogicRefs.soundEnabled; setSoundEnabled(newValue); localStorage.setItem('bounceGameSound', newValue.toString()); if (!newValue) stopBackgroundMusic(); return; }
+                        for (const [key, slider] of Object.entries(settingsRef.current.sliders)) { if (isPointInRect(canvasX, canvasY, slider.x - 12, slider.y - 12, slider.width + 24, 30)) { isDraggingRef.current = key; handlePointerMove(e); return; } }
                         return;
                     }
                     
-                    if (gameLogicRefs.gameState === 'start') {
-                        setGameState('playing');
-                        ballRef.current = { x: 200, y: 100, vx: 0, vy: 0, radius: 30 };
-                        setScore(0);
-                        particlesRef.current = [];
-                        gameOverTriggered = false;
-                        startBackgroundMusic();
-                        return;
-                    }
-
-                    if (gameLogicRefs.gameState === 'gameover') {
-                        setGameState('start');
-                        stopBackgroundMusic();
-                        return;
-                    }
-
+                    if (gameLogicRefs.gameState === 'start') { setGameState('playing'); ballRef.current = { x: 200, y: 100, vx: 0, vy: 0, radius: 30 }; setScore(0); particlesRef.current = []; gameOverTriggered = false; startBackgroundMusic(); return; }
+                    if (gameLogicRefs.gameState === 'gameover') { setGameState('start'); stopBackgroundMusic(); return; }
                     if (gameLogicRefs.gameState === 'playing') {
                         const ball = ballRef.current;
                         if (ball.y > canvas.height + ball.radius) return;
-                        const dx = canvasX - ball.x;
-                        const dy = canvasY - ball.y;
-                        const dist = Math.sqrt(dx * dx + dy * dy);
-
-                        if (dist < gameLogicRefs.hitZone && dist > 0) {
-                            const forceX = -(dx / dist) * gameLogicRefs.hitForce;
-                            const forceY = -(dy / dist) * gameLogicRefs.hitForce;
-                            ball.vx += forceX;
-                            ball.vy += forceY;
-                            setScore(s => s + 1);
-                            createSparkles(canvasX, canvasY, 8);
-                            playHitSound();
-                        }
+                        const dx = canvasX - ball.x; const dy = canvasY - ball.y; const dist = Math.sqrt(dx * dx + dy * dy);
+                        if (dist < gameLogicRefs.hitZone && dist > 0) { const forceX = -(dx / dist) * gameLogicRefs.hitForce; const forceY = -(dy / dist) * gameLogicRefs.hitForce; ball.vx += forceX; ball.vy += forceY; setScore(s => s + 1); createSparkles(canvasX, canvasY, 8); playHitSound(); }
                     }
                 };
 
                 const handlePointerMove = (e) => {
                     if (!isDraggingRef.current) return;
                     e.preventDefault();
-
                     const rect = canvas.getBoundingClientRect();
                     const clientX = e.clientX || e.touches[0].clientX;
                     const canvasX = (clientX - rect.left) * (canvas.width / rect.width);
                     const key = isDraggingRef.current;
                     const slider = settingsRef.current.sliders[key];
-
                     const ratio = Math.max(0, Math.min(1, (canvasX - slider.x) / slider.width));
                     const newValue = slider.min + ratio * (slider.max - slider.min);
-
-                    if (key === 'gravity') {
-                        setGravity(newValue);
-                        localStorage.setItem('bounceGameGravity', newValue.toString());
-                    } else if (key === 'hitForce') {
-                        const roundedValue = Math.round(newValue);
-                        setHitForce(roundedValue);
-                        localStorage.setItem('bounceGameHitForce', roundedValue.toString());
-                    } else if (key === 'hitZone') {
-                        const roundedValue = Math.round(newValue);
-                        setHitZone(roundedValue);
-                        localStorage.setItem('bounceGameHitZone', roundedValue.toString());
-                    }
+                    if (key === 'gravity') { setGravity(newValue); localStorage.setItem('bounceGameGravity', newValue.toString()); }
+                    else if (key === 'hitForce') { const roundedValue = Math.round(newValue); setHitForce(roundedValue); localStorage.setItem('bounceGameHitForce', roundedValue.toString()); }
+                    else if (key === 'hitZone') { const roundedValue = Math.round(newValue); setHitZone(roundedValue); localStorage.setItem('bounceGameHitZone', roundedValue.toString()); }
                 };
                 
                 const handlePointerUp = () => { isDraggingRef.current = null; };
@@ -227,44 +182,21 @@
                 document.addEventListener('touchend', handlePointerUp);
 
                 const gameLoop = () => {
-                    // FIX: Always read from the refs object to get the latest state values for drawing and logic.
                     const refs = gameLogicRefs;
                     const ball = ballRef.current;
-
-                    if (refs.gameState === 'playing') {
-                        ball.vy += refs.gravity;
-                        ball.x += ball.vx;
-                        ball.y += ball.vy;
-                        ball.vx *= 0.99;
-                        ball.vy *= 0.995;
-                        if (ball.x < ball.radius || ball.x > canvas.width - ball.radius) { ball.vx *= -0.7; ball.x = Math.max(ball.radius, Math.min(canvas.width - ball.radius, ball.x)); createSparkles(ball.x, ball.y, 5); }
-                        if (ball.y - ball.radius > canvas.height && !gameOverTriggered) { gameOverTriggered = true; stopBackgroundMusic(); if (refs.score > refs.highScore) { setHighScore(refs.score); localStorage.setItem('bounceGameHighScore', refs.score.toString()); } setGameState('gameover'); }
-                    }
-                    
+                    if (refs.gameState === 'playing') { ball.vy += refs.gravity; ball.x += ball.vx; ball.y += ball.vy; ball.vx *= 0.99; ball.vy *= 0.995; if (ball.x < ball.radius || ball.x > canvas.width - ball.radius) { ball.vx *= -0.7; ball.x = Math.max(ball.radius, Math.min(canvas.width - ball.radius, ball.x)); createSparkles(ball.x, ball.y, 5); } if (ball.y - ball.radius > canvas.height && !gameOverTriggered) { gameOverTriggered = true; stopBackgroundMusic(); if (refs.score > refs.highScore) { setHighScore(refs.score); localStorage.setItem('bounceGameHighScore', refs.score.toString()); } setGameState('gameover'); } }
                     const particles = particlesRef.current;
                     for (let i = particles.length - 1; i >= 0; i--) { const p = particles[i]; p.x += p.vx; p.y += p.vy; p.vy += 0.15; p.life -= 0.02; if (p.life <= 0) { particles.splice(i, 1); } }
-                    
                     ctx.fillStyle = '#1a1a2e'; ctx.fillRect(0, 0, canvas.width, canvas.height);
                     const time = Date.now() * 0.001;
-                    
                     for (let i = 0; i < 30; i++) { const x = (i * 73) % canvas.width; const y = ((i * 127 + time * 20) % canvas.height); const size = 1 + (i % 3); const alpha = 0.3 + Math.sin(time + i) * 0.3; ctx.fillStyle = `rgba(255, 255, 255, ${alpha})`; ctx.beginPath(); ctx.arc(x, y, size, 0, Math.PI * 2); ctx.fill(); }
                     if (refs.gameState !== 'playing') { ctx.fillStyle = 'rgba(255, 255, 255, 0.5)'; ctx.font = 'bold 30px Arial'; ctx.textAlign = 'center'; ctx.fillText('⚙️', 370, 35); }
-                    
                     if (refs.showSettings && refs.gameState !== 'playing') {
                         ctx.fillStyle = 'rgba(0, 0, 0, 0.85)'; ctx.fillRect(30, 80, 340, 360);
                         ctx.fillStyle = '#fff'; ctx.font = 'bold 24px Arial'; ctx.textAlign = 'center'; ctx.fillText('SETTINGS', 200, 120);
-                        const drawSlider = (label, value, sliderKey) => {
-                            const slider = settingsRef.current.sliders[sliderKey]; const { x, y, width, min, max } = slider;
-                            ctx.fillStyle = '#fff'; ctx.font = 'bold 16px Arial'; ctx.textAlign = 'left'; ctx.fillText(`${label}: ${value.toFixed(sliderKey === 'gravity' ? 2 : 0)}${sliderKey === 'hitZone' ? 'px' : ''}`, x, y - 10);
-                            ctx.fillStyle = 'rgba(255, 255, 255, 0.3)'; ctx.fillRect(x, y, width, 6); const handleX = x + ((value - min) / (max - min)) * width; ctx.fillStyle = '#fff'; ctx.beginPath(); ctx.arc(handleX, y + 3, 12, 0, Math.PI * 2); ctx.fill();
-                        };
-                        // FIX: Use the updated values from the refs object for drawing.
-                        drawSlider('Gravity', refs.gravity, 'gravity');
-                        drawSlider('Hit Force', refs.hitForce, 'hitForce');
-                        drawSlider('Hit Zone', refs.hitZone, 'hitZone');
-                        const soundToggle = settingsRef.current.soundToggle; ctx.fillStyle = refs.soundEnabled ? '#10b981' : '#ef4444'; ctx.fillRect(soundToggle.x, soundToggle.y, soundToggle.width, soundToggle.height);
-                        ctx.fillStyle = '#fff'; ctx.font = 'bold 16px Arial'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText(refs.soundEnabled ? '🔊 ON' : '🔇 OFF', soundToggle.x + soundToggle.width / 2, soundToggle.y + soundToggle.height / 2);
-                        ctx.textBaseline = 'alphabetic';
+                        const drawSlider = (label, value, sliderKey) => { const slider = settingsRef.current.sliders[sliderKey]; const { x, y, width, min, max } = slider; ctx.fillStyle = '#fff'; ctx.font = 'bold 16px Arial'; ctx.textAlign = 'left'; ctx.fillText(`${label}: ${value.toFixed(sliderKey === 'gravity' ? 2 : 0)}${sliderKey === 'hitZone' ? 'px' : ''}`, x, y - 10); ctx.fillStyle = 'rgba(255, 255, 255, 0.3)'; ctx.fillRect(x, y, width, 6); const handleX = x + ((value - min) / (max - min)) * width; ctx.fillStyle = '#fff'; ctx.beginPath(); ctx.arc(handleX, y + 3, 12, 0, Math.PI * 2); ctx.fill(); };
+                        drawSlider('Gravity', refs.gravity, 'gravity'); drawSlider('Hit Force', refs.hitForce, 'hitForce'); drawSlider('Hit Zone', refs.hitZone, 'hitZone');
+                        const soundToggle = settingsRef.current.soundToggle; ctx.fillStyle = refs.soundEnabled ? '#10b981' : '#ef4444'; ctx.fillRect(soundToggle.x, soundToggle.y, soundToggle.width, soundToggle.height); ctx.fillStyle = '#fff'; ctx.font = 'bold 16px Arial'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText(refs.soundEnabled ? '🔊 ON' : '🔇 OFF', soundToggle.x + soundToggle.width / 2, soundToggle.y + soundToggle.height / 2); ctx.textBaseline = 'alphabetic';
                     }
                     if (refs.gameState === 'start' && !refs.showSettings) { const gradient = ctx.createRadialGradient(200, 300, 50, 200, 300, 300); gradient.addColorStop(0, 'rgba(138, 43, 226, 0.3)'); gradient.addColorStop(1, 'rgba(0, 0, 0, 0)'); ctx.fillStyle = gradient; ctx.fillRect(0, 0, canvas.width, canvas.height); const titleY = 200 + Math.sin(time * 2) * 8; ctx.shadowBlur = 30; ctx.shadowColor = '#ff00ff'; ctx.fillStyle = '#fff'; ctx.font = 'bold 72px Arial'; ctx.textAlign = 'center'; ctx.fillText('BOINK!', 200, titleY); ctx.shadowBlur = 0; const pulseAlpha = 0.5 + Math.sin(time * 3) * 0.3; ctx.fillStyle = `rgba(255, 255, 255, ${pulseAlpha})`; ctx.font = 'bold 24px Arial'; ctx.fillText('TAP TO START', 200, 400); if (refs.highScore > 0) { ctx.fillStyle = '#ffd700'; ctx.font = 'bold 18px Arial'; ctx.fillText(`★ BEST: ${refs.highScore} ★`, 200, 480); } }
                     if (refs.gameState === 'playing') { particlesRef.current.forEach(p => { ctx.fillStyle = p.color; ctx.globalAlpha = p.life; ctx.beginPath(); ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2); ctx.fill(); }); ctx.globalAlpha = 1; ctx.fillStyle = 'rgba(255, 255, 255, 0.9)'; ctx.font = 'bold 24px Arial'; ctx.textAlign = 'left'; ctx.fillText(`Score: ${refs.score}`, 15, 35); ctx.font = 'bold 16px Arial'; ctx.fillStyle = 'rgba(255, 255, 255, 0.7)'; ctx.fillText(`Best: ${refs.highScore}`, 15, 60); ctx.fillStyle = '#fff'; ctx.beginPath(); ctx.arc(ball.x, ball.y, ball.radius, 0, Math.PI * 2); ctx.fill(); ctx.strokeStyle = 'rgba(0, 255, 0, 0.3)'; ctx.lineWidth = 2; ctx.beginPath(); ctx.arc(ball.x, ball.y, refs.hitZone, 0, Math.PI * 2); ctx.stroke(); }
@@ -280,8 +212,6 @@
                     stopBackgroundMusic();
                     if (hitSynthRef.current) { hitSynthRef.current.dispose(); hitSynthRef.current = null; }
                     if (musicSynthRef.current) { musicSynthRef.current.dispose(); musicSynthRef.current = null; }
-                    document.removeEventListener('mousedown', unlockAudio);
-                    document.removeEventListener('touchstart', unlockAudio);
                     canvas.removeEventListener('mousedown', handlePointerDown);
                     canvas.removeEventListener('touchstart', handlePointerDown);
                     document.removeEventListener('mousemove', handlePointerMove);
@@ -289,11 +219,26 @@
                     document.removeEventListener('mouseup', handlePointerUp);
                     document.removeEventListener('touchend', handlePointerUp);
                 };
-            }, [startBackgroundMusic, stopBackgroundMusic, playHitSound]);
+            }, []); // Keep the dependency array empty
 
             return (
                 <div className="flex flex-col items-center justify-center min-h-screen bg-gradient-to-b from-purple-900 to-indigo-900 p-4">
-                    <div className="bg-white rounded-lg shadow-2xl p-6">
+                    <div className="bg-white rounded-lg shadow-2xl p-6 relative">
+                        {/* --- IOS AUDIO FIX --- */}
+                        {/* This overlay captures the first tap to unlock audio context. */}
+                        {!audioUnlocked && (
+                            <div 
+                                onClick={handleAudioUnlock}
+                                onTouchEnd={handleAudioUnlock}
+                                className="absolute inset-0 bg-black bg-opacity-50 flex items-center justify-center z-10 cursor-pointer rounded-lg"
+                                style={{ top: '24px', left: '24px', right: '24px', bottom: '24px' }}
+                            >
+                                <div className="text-white text-center">
+                                    <p className="text-6xl">🎵</p>
+                                    <p className="text-2xl font-bold animate-pulse">Tap to enable sound</p>
+                                </div>
+                            </div>
+                        )}
                         <canvas
                             ref={canvasRef}
                             className="border-4 border-purple-600 rounded-lg"
