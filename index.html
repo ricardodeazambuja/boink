@@ -28,6 +28,7 @@
             const [soundEnabled, setSoundEnabled] = useState(() => localStorage.getItem('bounceGameSound') !== 'false');
             const [audioUnlocked, setAudioUnlocked] = useState(false);
 
+            // Refs for game loop state to prevent stale closures
             const gameLogicRefs = useRef({}).current;
             gameLogicRefs.gameState = gameState;
             gameLogicRefs.soundEnabled = soundEnabled;
@@ -37,11 +38,14 @@
             gameLogicRefs.score = score;
             gameLogicRefs.highScore = highScore;
             gameLogicRefs.showSettings = showSettings;
+            gameLogicRefs.audioUnlocked = audioUnlocked;
 
+            // Refs for game objects
             const ballRef = useRef({ x: 200, y: 100, vx: 0, vy: 0, radius: 30 });
             const particlesRef = useRef([]);
             const isDraggingRef = useRef(null);
             
+            // Refs for persistent audio objects
             const hitSynthRef = useRef(null);
             const musicSynthRef = useRef(null);
             const musicPartsRef = useRef(null);
@@ -54,6 +58,20 @@
                 },
                 soundToggle: { x: 150, y: 390, width: 100, height: 40 }
             });
+
+            // Function to unlock and initialize audio context and synths
+            const handleAudioUnlock = useCallback(async () => {
+                if (gameLogicRefs.audioUnlocked || Tone.context.state === 'running') return;
+                try {
+                    await Tone.start();
+                    hitSynthRef.current = new Tone.Synth({ oscillator: { type: 'sine' }, envelope: { attack: 0.005, decay: 0.1, sustain: 0, release: 0.1 } }).toDestination();
+                    musicSynthRef.current = new Tone.PolySynth(Tone.Synth, { oscillator: { type: 'triangle' }, envelope: { attack: 0.005, decay: 0.1, sustain: 0.4, release: 0.2 }, volume: -8 }).toDestination();
+                    console.log(`Audio is unlocked and ready. Context state: ${Tone.context.state}`);
+                    setAudioUnlocked(true);
+                } catch (e) {
+                    console.error("Audio could not be unlocked:", e);
+                }
+            }, []);
 
             const playHitSound = useCallback(() => {
                 if (!gameLogicRefs.soundEnabled || !hitSynthRef.current) return;
@@ -81,22 +99,10 @@
                     musicPartsRef.current = { melodyPart, bassPart, bass };
                     Tone.Transport.bpm.value = 160;
                     Tone.Transport.start();
-                } catch (error) { console.error('Error starting audio:', error); }
+                } catch (error) { console.error('Error starting music:', error); }
             }, []);
-
-            const handleAudioUnlock = async () => {
-                if (audioUnlocked || Tone.context.state === 'running') return;
-                try {
-                    await Tone.start();
-                    hitSynthRef.current = new Tone.Synth({ oscillator: { type: 'sine' }, envelope: { attack: 0.005, decay: 0.1, sustain: 0, release: 0.1 } }).toDestination();
-                    musicSynthRef.current = new Tone.PolySynth(Tone.Synth, { oscillator: { type: 'triangle' }, envelope: { attack: 0.005, decay: 0.1, sustain: 0.4, release: 0.2 }, volume: -8 }).toDestination();
-                    console.log(`Audio is unlocked and ready. Context state: ${Tone.context.state}`);
-                    setAudioUnlocked(true);
-                } catch (e) {
-                    console.error("Audio could not be unlocked:", e);
-                }
-            };
             
+            // Main game effect hook, runs only once
             useEffect(() => {
                 const canvas = canvasRef.current;
                 const ctx = canvas.getContext('2d');
@@ -107,11 +113,12 @@
                 const createSparkles = (x, y, count) => { for (let i = 0; i < count; i++) { const angle = (Math.PI * 2 * i) / count + Math.random() * 0.5; const speed = 2 + Math.random() * 3; particlesRef.current.push({ x, y, vx: Math.cos(angle) * speed, vy: Math.sin(angle) * speed, life: 1, size: 2 + Math.random() * 3, color: `hsl(${Math.random() * 60 + 40}, 100%, 70%)` }); } };
                 const isPointInRect = (px, py, x, y, width, height) => { return px >= x && px <= x + width && py >= y && py <= y + height; };
 
-                const handlePointerDown = (e) => {
+                const handlePointerDown = async (e) => {
                     e.preventDefault();
-                    // FIX: Guard clause. Listeners are attached from the start, but they
-                    // will do nothing until this state variable is true.
-                    if (!gameLogicRefs.audioUnlockedState) return;
+                    
+                    if (!gameLogicRefs.audioUnlocked) {
+                        await handleAudioUnlock();
+                    }
                     
                     const rect = canvas.getBoundingClientRect();
                     const canvasX = ((e.clientX || e.touches[0].clientX) - rect.left) * (canvas.width / rect.width);
@@ -159,7 +166,7 @@
                 document.addEventListener('mouseup', handlePointerUp);
                 document.addEventListener('touchend', handlePointerUp);
 
-                const gameLoop = () => { /* ... Full drawing and game logic ... */ 
+                const gameLoop = () => {
                     const refs = gameLogicRefs; const ball = ballRef.current; if (refs.gameState === 'playing') { ball.vy += refs.gravity; ball.x += ball.vx; ball.y += ball.vy; ball.vx *= 0.99; ball.vy *= 0.995; if (ball.x < ball.radius || ball.x > canvas.width - ball.radius) { ball.vx *= -0.7; ball.x = Math.max(ball.radius, Math.min(canvas.width - ball.radius, ball.x)); createSparkles(ball.x, ball.y, 5); } if (ball.y - ball.radius > canvas.height && !gameOverTriggered) { gameOverTriggered = true; stopBackgroundMusic(); if (refs.score > refs.highScore) { setHighScore(refs.score); localStorage.setItem('bounceGameHighScore', refs.score.toString()); } setGameState('gameover'); } }
                     const particles = particlesRef.current; for (let i = particles.length - 1; i >= 0; i--) { const p = particles[i]; p.x += p.vx; p.y += p.vy; p.vy += 0.15; p.life -= 0.02; if (p.life <= 0) { particles.splice(i, 1); } }
                     ctx.fillStyle = '#1a1a2e'; ctx.fillRect(0, 0, canvas.width, canvas.height); const time = Date.now() * 0.001;
@@ -176,34 +183,22 @@
                 gameLoop();
 
                 return () => {
-                    cancelAnimationFrame(animationId); stopBackgroundMusic();
+                    cancelAnimationFrame(animationId);
+                    stopBackgroundMusic();
                     if (hitSynthRef.current) { hitSynthRef.current.dispose(); hitSynthRef.current = null; }
                     if (musicSynthRef.current) { musicSynthRef.current.dispose(); musicSynthRef.current = null; }
-                    canvas.removeEventListener('mousedown', handlePointerDown); canvas.removeEventListener('touchstart', handlePointerDown);
-                    document.removeEventListener('mousemove', handlePointerMove); document.removeEventListener('touchmove', handlePointerMove);
-                    document.removeEventListener('mouseup', handlePointerUp); document.removeEventListener('touchend', handlePointerUp);
+                    canvas.removeEventListener('mousedown', handlePointerDown);
+                    canvas.removeEventListener('touchstart', handlePointerDown);
+                    document.removeEventListener('mousemove', handlePointerMove);
+                    document.removeEventListener('touchmove', handlePointerMove);
+                    document.removeEventListener('mouseup', handlePointerUp);
+                    document.removeEventListener('touchend', handlePointerUp);
                 };
-            }, []); // FIX: This dependency array is now empty, so the effect runs only once on mount.
-
-            // This passes the latest 'audioUnlocked' state into the game loop's closure.
-            gameLogicRefs.audioUnlockedState = audioUnlocked;
+            }, []); // Empty dependency array ensures this runs only once.
 
             return (
                 <div className="flex flex-col items-center justify-center min-h-screen bg-gradient-to-b from-purple-900 to-indigo-900 p-4">
                     <div className="bg-white rounded-lg shadow-2xl p-6 relative">
-                        {!audioUnlocked && (
-                            <div 
-                                onMouseDown={handleAudioUnlock} // Use onMouseDown for immediate PC response
-                                onTouchStart={handleAudioUnlock}
-                                className="absolute inset-0 bg-black bg-opacity-60 flex items-center justify-center z-10 cursor-pointer rounded-lg"
-                                style={{ top: '24px', left: '24px', right: '24px', bottom: '24px' }}
-                            >
-                                <div className="text-white text-center p-4">
-                                    <p className="text-6xl">🎵</p>
-                                    <p className="text-2xl font-bold animate-pulse">Tap to Enable Sound</p>
-                                </div>
-                            </div>
-                        )}
                         <canvas
                             ref={canvasRef}
                             className="border-4 border-purple-600 rounded-lg"
