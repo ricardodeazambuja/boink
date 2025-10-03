@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Boink!</title>
+    <title>Boink! (Universal Fix)</title>
     <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
     <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
@@ -25,9 +25,6 @@
             const [hitForce, setHitForce] = useState(() => parseInt(localStorage.getItem('bounceGameHitForce') || '30', 10));
             const [hitZone, setHitZone] = useState(() => parseInt(localStorage.getItem('bounceGameHitZone') || '90', 10));
             const [soundEnabled, setSoundEnabled] = useState(() => localStorage.getItem('bounceGameSound') !== 'false');
-
-            // --- IOS AUDIO FIX ---
-            // State to track if the user has interacted, which is necessary to unlock audio on iOS.
             const [audioUnlocked, setAudioUnlocked] = useState(false);
 
             const gameLogicRefs = useRef({}).current;
@@ -57,23 +54,8 @@
                 soundToggle: { x: 150, y: 390, width: 100, height: 40 }
             });
 
-            // --- IOS AUDIO FIX ---
-            // This function is now called ONLY after the user's first tap.
-            const initializeAudio = useCallback(() => {
-                if (hitSynthRef.current) return; // Already initialized
-                
-                console.log('Initializing audio synths...');
-                hitSynthRef.current = new Tone.Synth({ oscillator: { type: 'sine' }, envelope: { attack: 0.005, decay: 0.1, sustain: 0, release: 0.1 } }).toDestination();
-                musicSynthRef.current = new Tone.PolySynth(Tone.Synth, { oscillator: { type: 'triangle' }, envelope: { attack: 0.005, decay: 0.1, sustain: 0.4, release: 0.2 }, volume: -8 }).toDestination();
-                console.log('Audio synths ready.');
-            }, []);
-
             const playHitSound = useCallback(() => {
                 if (!gameLogicRefs.soundEnabled || !hitSynthRef.current) return;
-                // Add a fallback to resume context, just in case.
-                if (Tone.context.state === 'suspended') {
-                    Tone.context.resume();
-                }
                 hitSynthRef.current.triggerAttackRelease('C6', '16n');
             }, []);
 
@@ -89,11 +71,6 @@
             const startBackgroundMusic = useCallback(() => {
                 if (!gameLogicRefs.soundEnabled || !musicSynthRef.current || musicPartsRef.current || Tone.Transport.state === 'started') return;
                 try {
-                    // Add a fallback to resume context, just in case.
-                    if (Tone.context.state === 'suspended') {
-                        Tone.context.resume();
-                    }
-
                     const bass = new Tone.Synth({ oscillator: { type: 'sawtooth' }, envelope: { attack: 0.01, decay: 0.2, sustain: 0.4, release: 0.3 }, volume: -12 }).toDestination();
                     const melody = [ { note: 'E5', time: '0:0:0', duration: '16n' }, { note: 'G5', time: '0:0:1', duration: '16n' }, { note: 'A5', time: '0:0:2', duration: '16n' }, { note: 'B5', time: '0:0:3', duration: '16n' }, { note: 'E6', time: '0:1:0', duration: '8n' }, { note: 'D6', time: '0:1:2', duration: '8n' }, { note: 'B5', time: '0:2:0', duration: '8n' }, { note: 'G5', time: '0:2:2', duration: '16n' }, { note: 'A5', time: '0:2:3', duration: '16n' }, { note: 'B5', time: '0:3:0', duration: '8n' }, { note: 'A5', time: '0:3:2', duration: '16n' }, { note: 'G5', time: '0:3:3', duration: '16n' }, { note: 'E5', time: '1:0:0', duration: '16n' }, { note: 'G5', time: '1:0:1', duration: '16n' }, { note: 'B5', time: '1:0:2', duration: '8n' }, { note: 'D6', time: '1:1:0', duration: '8n' }, { note: 'E6', time: '1:1:2', duration: '16n' }, { note: 'D6', time: '1:1:3', duration: '16n' }, { note: 'B5', time: '1:2:0', duration: '8n' }, { note: 'A5', time: '1:2:2', duration: '8n' }, { note: 'G5', time: '1:3:0', duration: '4n' } ];
                     const melodyPart = new Tone.Part((time, note) => { musicSynthRef.current.triggerAttackRelease(note.note, note.duration, time); }, melody).start(0);
@@ -106,26 +83,23 @@
                 } catch (error) { console.error('Error starting audio:', error); }
             }, []);
 
-            // --- IOS AUDIO FIX ---
-            // This handler is ONLY for the first tap to unlock the audio context.
             const handleAudioUnlock = async () => {
-                if (audioUnlocked) return;
+                if (audioUnlocked || Tone.context.state === 'running') return;
                 try {
                     await Tone.start();
-                    console.log("Audio unlocked successfully!");
-                    initializeAudio();
+                    hitSynthRef.current = new Tone.Synth({ oscillator: { type: 'sine' }, envelope: { attack: 0.005, decay: 0.1, sustain: 0, release: 0.1 } }).toDestination();
+                    musicSynthRef.current = new Tone.PolySynth(Tone.Synth, { oscillator: { type: 'triangle' }, envelope: { attack: 0.005, decay: 0.1, sustain: 0.4, release: 0.2 }, volume: -8 }).toDestination();
+                    console.log(`Audio is unlocked and ready. Context state: ${Tone.context.state}`);
                     setAudioUnlocked(true);
                 } catch (e) {
-                    console.error("Could not start audio context:", e);
+                    console.error("Audio could not be unlocked:", e);
                 }
             };
             
             useEffect(() => {
                 const canvas = canvasRef.current;
                 const ctx = canvas.getContext('2d');
-                canvas.width = 400;
-                canvas.height = 600;
-
+                canvas.width = 400; canvas.height = 600;
                 let animationId;
                 let gameOverTriggered = false;
 
@@ -134,6 +108,9 @@
 
                 const handlePointerDown = (e) => {
                     e.preventDefault();
+                    // FIX: Guard clause. Listeners are attached from the start, but they
+                    // will do nothing until this state variable is true.
+                    if (!gameLogicRefs.audioUnlockedState) return;
                     
                     const rect = canvas.getBoundingClientRect();
                     const canvasX = ((e.clientX || e.touches[0].clientX) - rect.left) * (canvas.width / rect.width);
@@ -181,61 +158,48 @@
                 document.addEventListener('mouseup', handlePointerUp);
                 document.addEventListener('touchend', handlePointerUp);
 
-                const gameLoop = () => {
-                    const refs = gameLogicRefs;
-                    const ball = ballRef.current;
-                    if (refs.gameState === 'playing') { ball.vy += refs.gravity; ball.x += ball.vx; ball.y += ball.vy; ball.vx *= 0.99; ball.vy *= 0.995; if (ball.x < ball.radius || ball.x > canvas.width - ball.radius) { ball.vx *= -0.7; ball.x = Math.max(ball.radius, Math.min(canvas.width - ball.radius, ball.x)); createSparkles(ball.x, ball.y, 5); } if (ball.y - ball.radius > canvas.height && !gameOverTriggered) { gameOverTriggered = true; stopBackgroundMusic(); if (refs.score > refs.highScore) { setHighScore(refs.score); localStorage.setItem('bounceGameHighScore', refs.score.toString()); } setGameState('gameover'); } }
-                    const particles = particlesRef.current;
-                    for (let i = particles.length - 1; i >= 0; i--) { const p = particles[i]; p.x += p.vx; p.y += p.vy; p.vy += 0.15; p.life -= 0.02; if (p.life <= 0) { particles.splice(i, 1); } }
-                    ctx.fillStyle = '#1a1a2e'; ctx.fillRect(0, 0, canvas.width, canvas.height);
-                    const time = Date.now() * 0.001;
+                const gameLoop = () => { /* ... Full drawing and game logic ... */ 
+                    const refs = gameLogicRefs; const ball = ballRef.current; if (refs.gameState === 'playing') { ball.vy += refs.gravity; ball.x += ball.vx; ball.y += ball.vy; ball.vx *= 0.99; ball.vy *= 0.995; if (ball.x < ball.radius || ball.x > canvas.width - ball.radius) { ball.vx *= -0.7; ball.x = Math.max(ball.radius, Math.min(canvas.width - ball.radius, ball.x)); createSparkles(ball.x, ball.y, 5); } if (ball.y - ball.radius > canvas.height && !gameOverTriggered) { gameOverTriggered = true; stopBackgroundMusic(); if (refs.score > refs.highScore) { setHighScore(refs.score); localStorage.setItem('bounceGameHighScore', refs.score.toString()); } setGameState('gameover'); } }
+                    const particles = particlesRef.current; for (let i = particles.length - 1; i >= 0; i--) { const p = particles[i]; p.x += p.vx; p.y += p.vy; p.vy += 0.15; p.life -= 0.02; if (p.life <= 0) { particles.splice(i, 1); } }
+                    ctx.fillStyle = '#1a1a2e'; ctx.fillRect(0, 0, canvas.width, canvas.height); const time = Date.now() * 0.001;
                     for (let i = 0; i < 30; i++) { const x = (i * 73) % canvas.width; const y = ((i * 127 + time * 20) % canvas.height); const size = 1 + (i % 3); const alpha = 0.3 + Math.sin(time + i) * 0.3; ctx.fillStyle = `rgba(255, 255, 255, ${alpha})`; ctx.beginPath(); ctx.arc(x, y, size, 0, Math.PI * 2); ctx.fill(); }
                     if (refs.gameState !== 'playing') { ctx.fillStyle = 'rgba(255, 255, 255, 0.5)'; ctx.font = 'bold 30px Arial'; ctx.textAlign = 'center'; ctx.fillText('⚙️', 370, 35); }
-                    if (refs.showSettings && refs.gameState !== 'playing') {
-                        ctx.fillStyle = 'rgba(0, 0, 0, 0.85)'; ctx.fillRect(30, 80, 340, 360);
-                        ctx.fillStyle = '#fff'; ctx.font = 'bold 24px Arial'; ctx.textAlign = 'center'; ctx.fillText('SETTINGS', 200, 120);
-                        const drawSlider = (label, value, sliderKey) => { const slider = settingsRef.current.sliders[sliderKey]; const { x, y, width, min, max } = slider; ctx.fillStyle = '#fff'; ctx.font = 'bold 16px Arial'; ctx.textAlign = 'left'; ctx.fillText(`${label}: ${value.toFixed(sliderKey === 'gravity' ? 2 : 0)}${sliderKey === 'hitZone' ? 'px' : ''}`, x, y - 10); ctx.fillStyle = 'rgba(255, 255, 255, 0.3)'; ctx.fillRect(x, y, width, 6); const handleX = x + ((value - min) / (max - min)) * width; ctx.fillStyle = '#fff'; ctx.beginPath(); ctx.arc(handleX, y + 3, 12, 0, Math.PI * 2); ctx.fill(); };
-                        drawSlider('Gravity', refs.gravity, 'gravity'); drawSlider('Hit Force', refs.hitForce, 'hitForce'); drawSlider('Hit Zone', refs.hitZone, 'hitZone');
-                        const soundToggle = settingsRef.current.soundToggle; ctx.fillStyle = refs.soundEnabled ? '#10b981' : '#ef4444'; ctx.fillRect(soundToggle.x, soundToggle.y, soundToggle.width, soundToggle.height); ctx.fillStyle = '#fff'; ctx.font = 'bold 16px Arial'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText(refs.soundEnabled ? '🔊 ON' : '🔇 OFF', soundToggle.x + soundToggle.width / 2, soundToggle.y + soundToggle.height / 2); ctx.textBaseline = 'alphabetic';
-                    }
+                    if (refs.showSettings && refs.gameState !== 'playing') { ctx.fillStyle = 'rgba(0, 0, 0, 0.85)'; ctx.fillRect(30, 80, 340, 360); ctx.fillStyle = '#fff'; ctx.font = 'bold 24px Arial'; ctx.textAlign = 'center'; ctx.fillText('SETTINGS', 200, 120); const drawSlider = (label, value, sliderKey) => { const slider = settingsRef.current.sliders[sliderKey]; const { x, y, width, min, max } = slider; ctx.fillStyle = '#fff'; ctx.font = 'bold 16px Arial'; ctx.textAlign = 'left'; ctx.fillText(`${label}: ${value.toFixed(sliderKey === 'gravity' ? 2 : 0)}${sliderKey === 'hitZone' ? 'px' : ''}`, x, y - 10); ctx.fillStyle = 'rgba(255, 255, 255, 0.3)'; ctx.fillRect(x, y, width, 6); const handleX = x + ((value - min) / (max - min)) * width; ctx.fillStyle = '#fff'; ctx.beginPath(); ctx.arc(handleX, y + 3, 12, 0, Math.PI * 2); ctx.fill(); }; drawSlider('Gravity', refs.gravity, 'gravity'); drawSlider('Hit Force', refs.hitForce, 'hitForce'); drawSlider('Hit Zone', refs.hitZone, 'hitZone'); const soundToggle = settingsRef.current.soundToggle; ctx.fillStyle = refs.soundEnabled ? '#10b981' : '#ef4444'; ctx.fillRect(soundToggle.x, soundToggle.y, soundToggle.width, soundToggle.height); ctx.fillStyle = '#fff'; ctx.font = 'bold 16px Arial'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText(refs.soundEnabled ? '🔊 ON' : '🔇 OFF', soundToggle.x + soundToggle.width / 2, soundToggle.y + soundToggle.height / 2); ctx.textBaseline = 'alphabetic'; }
                     if (refs.gameState === 'start' && !refs.showSettings) { const gradient = ctx.createRadialGradient(200, 300, 50, 200, 300, 300); gradient.addColorStop(0, 'rgba(138, 43, 226, 0.3)'); gradient.addColorStop(1, 'rgba(0, 0, 0, 0)'); ctx.fillStyle = gradient; ctx.fillRect(0, 0, canvas.width, canvas.height); const titleY = 200 + Math.sin(time * 2) * 8; ctx.shadowBlur = 30; ctx.shadowColor = '#ff00ff'; ctx.fillStyle = '#fff'; ctx.font = 'bold 72px Arial'; ctx.textAlign = 'center'; ctx.fillText('BOINK!', 200, titleY); ctx.shadowBlur = 0; const pulseAlpha = 0.5 + Math.sin(time * 3) * 0.3; ctx.fillStyle = `rgba(255, 255, 255, ${pulseAlpha})`; ctx.font = 'bold 24px Arial'; ctx.fillText('TAP TO START', 200, 400); if (refs.highScore > 0) { ctx.fillStyle = '#ffd700'; ctx.font = 'bold 18px Arial'; ctx.fillText(`★ BEST: ${refs.highScore} ★`, 200, 480); } }
                     if (refs.gameState === 'playing') { particlesRef.current.forEach(p => { ctx.fillStyle = p.color; ctx.globalAlpha = p.life; ctx.beginPath(); ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2); ctx.fill(); }); ctx.globalAlpha = 1; ctx.fillStyle = 'rgba(255, 255, 255, 0.9)'; ctx.font = 'bold 24px Arial'; ctx.textAlign = 'left'; ctx.fillText(`Score: ${refs.score}`, 15, 35); ctx.font = 'bold 16px Arial'; ctx.fillStyle = 'rgba(255, 255, 255, 0.7)'; ctx.fillText(`Best: ${refs.highScore}`, 15, 60); ctx.fillStyle = '#fff'; ctx.beginPath(); ctx.arc(ball.x, ball.y, ball.radius, 0, Math.PI * 2); ctx.fill(); ctx.strokeStyle = 'rgba(0, 255, 0, 0.3)'; ctx.lineWidth = 2; ctx.beginPath(); ctx.arc(ball.x, ball.y, refs.hitZone, 0, Math.PI * 2); ctx.stroke(); }
                     if (refs.gameState === 'gameover' && !refs.showSettings) { const gradient = ctx.createRadialGradient(200, 300, 50, 200, 300, 400); gradient.addColorStop(0, 'rgba(139, 0, 0, 0.5)'); gradient.addColorStop(1, 'rgba(0, 0, 0, 0.8)'); ctx.fillStyle = gradient; ctx.fillRect(0, 0, canvas.width, canvas.height); ctx.shadowBlur = 30; ctx.shadowColor = '#ff0000'; ctx.fillStyle = '#ff4444'; ctx.font = 'bold 56px Arial'; ctx.textAlign = 'center'; ctx.fillText('GAME', 200, 180); ctx.fillText('OVER', 200, 240); ctx.shadowBlur = 0; ctx.fillStyle = '#fff'; ctx.font = 'bold 36px Arial'; ctx.fillText(`${refs.score}`, 200, 315); if (refs.score === refs.highScore && refs.score > 0) { ctx.shadowBlur = 20; ctx.shadowColor = '#ffd700'; ctx.font = 'bold 28px Arial'; ctx.fillStyle = '#ffd700'; const starY = 360 + Math.sin(time * 4) * 3; ctx.fillText('★ NEW RECORD! ★', 200, starY); ctx.shadowBlur = 0; } else if (refs.highScore > 0) { ctx.font = '22px Arial'; ctx.fillStyle = 'rgba(255, 255, 255, 0.7)'; ctx.fillText(`Best: ${refs.highScore}`, 200, 370); } const continueAlpha = 0.6 + Math.sin(time * 3) * 0.3; ctx.font = 'bold 22px Arial'; ctx.fillStyle = `rgba(255, 255, 255, ${continueAlpha})`; ctx.fillText('TAP TO CONTINUE', 200, 480); }
-                    
+                
                     animationId = requestAnimationFrame(gameLoop);
                 };
 
                 gameLoop();
 
                 return () => {
-                    cancelAnimationFrame(animationId);
-                    stopBackgroundMusic();
+                    cancelAnimationFrame(animationId); stopBackgroundMusic();
                     if (hitSynthRef.current) { hitSynthRef.current.dispose(); hitSynthRef.current = null; }
                     if (musicSynthRef.current) { musicSynthRef.current.dispose(); musicSynthRef.current = null; }
-                    canvas.removeEventListener('mousedown', handlePointerDown);
-                    canvas.removeEventListener('touchstart', handlePointerDown);
-                    document.removeEventListener('mousemove', handlePointerMove);
-                    document.removeEventListener('touchmove', handlePointerMove);
-                    document.removeEventListener('mouseup', handlePointerUp);
-                    document.removeEventListener('touchend', handlePointerUp);
+                    canvas.removeEventListener('mousedown', handlePointerDown); canvas.removeEventListener('touchstart', handlePointerDown);
+                    document.removeEventListener('mousemove', handlePointerMove); document.removeEventListener('touchmove', handlePointerMove);
+                    document.removeEventListener('mouseup', handlePointerUp); document.removeEventListener('touchend', handlePointerUp);
                 };
-            }, []); // Keep the dependency array empty
+            }, []); // FIX: This dependency array is now empty, so the effect runs only once on mount.
+
+            // This passes the latest 'audioUnlocked' state into the game loop's closure.
+            gameLogicRefs.audioUnlockedState = audioUnlocked;
 
             return (
                 <div className="flex flex-col items-center justify-center min-h-screen bg-gradient-to-b from-purple-900 to-indigo-900 p-4">
                     <div className="bg-white rounded-lg shadow-2xl p-6 relative">
-                        {/* --- IOS AUDIO FIX --- */}
-                        {/* This overlay captures the first tap to unlock audio context. */}
                         {!audioUnlocked && (
                             <div 
-                                onClick={handleAudioUnlock}
-                                onTouchEnd={handleAudioUnlock}
-                                className="absolute inset-0 bg-black bg-opacity-50 flex items-center justify-center z-10 cursor-pointer rounded-lg"
+                                onMouseDown={handleAudioUnlock} // Use onMouseDown for immediate PC response
+                                onTouchStart={handleAudioUnlock}
+                                className="absolute inset-0 bg-black bg-opacity-60 flex items-center justify-center z-10 cursor-pointer rounded-lg"
                                 style={{ top: '24px', left: '24px', right: '24px', bottom: '24px' }}
                             >
-                                <div className="text-white text-center">
+                                <div className="text-white text-center p-4">
                                     <p className="text-6xl">🎵</p>
-                                    <p className="text-2xl font-bold animate-pulse">Tap to enable sound</p>
+                                    <p className="text-2xl font-bold animate-pulse">Tap to Enable Sound</p>
                                 </div>
                             </div>
                         )}
