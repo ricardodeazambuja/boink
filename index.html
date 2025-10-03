@@ -7,13 +7,12 @@
     <title>Boink!</title>
     <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
     <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
-    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/tone/15.1.3/Tone.js"></script>
     <script src="https://cdn.tailwindcss.com"></script>
 </head>
 <body>
     <div id="root"></div>
-    <script type="text/babel">
+    <script type="text/javascript">
         const { useState, useEffect, useRef, useCallback } = React;
 
         const BounceGame = () => {
@@ -28,7 +27,6 @@
             const [soundEnabled, setSoundEnabled] = useState(() => localStorage.getItem('bounceGameSound') !== 'false');
             const [audioUnlocked, setAudioUnlocked] = useState(false);
 
-            // Refs for game loop state to prevent stale closures
             const gameLogicRefs = useRef({}).current;
             gameLogicRefs.gameState = gameState;
             gameLogicRefs.soundEnabled = soundEnabled;
@@ -40,12 +38,10 @@
             gameLogicRefs.showSettings = showSettings;
             gameLogicRefs.audioUnlocked = audioUnlocked;
 
-            // Refs for game objects
             const ballRef = useRef({ x: 200, y: 100, vx: 0, vy: 0, radius: 30 });
             const particlesRef = useRef([]);
             const isDraggingRef = useRef(null);
             
-            // Refs for persistent audio objects
             const hitSynthRef = useRef(null);
             const musicSynthRef = useRef(null);
             const musicPartsRef = useRef(null);
@@ -59,7 +55,6 @@
                 soundToggle: { x: 150, y: 390, width: 100, height: 40 }
             });
 
-            // Function to unlock and initialize audio context and synths
             const handleAudioUnlock = useCallback(async () => {
                 if (gameLogicRefs.audioUnlocked || Tone.context.state === 'running') return;
                 try {
@@ -102,7 +97,6 @@
                 } catch (error) { console.error('Error starting music:', error); }
             }, []);
             
-            // Main game effect hook, runs only once
             useEffect(() => {
                 const canvas = canvasRef.current;
                 const ctx = canvas.getContext('2d');
@@ -115,15 +109,10 @@
 
                 const handlePointerDown = async (e) => {
                     e.preventDefault();
-                    
-                    if (!gameLogicRefs.audioUnlocked) {
-                        await handleAudioUnlock();
-                    }
-                    
+                    if (!gameLogicRefs.audioUnlocked) { await handleAudioUnlock(); }
                     const rect = canvas.getBoundingClientRect();
                     const canvasX = ((e.clientX || e.touches[0].clientX) - rect.left) * (canvas.width / rect.width);
                     const canvasY = ((e.clientY || e.touches[0].clientY) - rect.top) * (canvas.height / rect.height);
-                    
                     if (gameLogicRefs.gameState !== 'playing' && isPointInRect(canvasX, canvasY, 350, 10, 40, 40)) { setShowSettings(s => !s); return; }
                     if (gameLogicRefs.showSettings) {
                         const soundToggle = settingsRef.current.soundToggle;
@@ -131,15 +120,9 @@
                         for (const [key, slider] of Object.entries(settingsRef.current.sliders)) { if (isPointInRect(canvasX, canvasY, slider.x - 12, slider.y - 12, slider.width + 24, 30)) { isDraggingRef.current = key; handlePointerMove(e); return; } }
                         return;
                     }
-                    
                     if (gameLogicRefs.gameState === 'start') { setGameState('playing'); ballRef.current = { x: 200, y: 100, vx: 0, vy: 0, radius: 30 }; setScore(0); particlesRef.current = []; gameOverTriggered = false; startBackgroundMusic(); return; }
                     if (gameLogicRefs.gameState === 'gameover') { setGameState('start'); stopBackgroundMusic(); return; }
-                    if (gameLogicRefs.gameState === 'playing') {
-                        const ball = ballRef.current;
-                        if (ball.y > canvas.height + ball.radius) return;
-                        const dx = canvasX - ball.x; const dy = canvasY - ball.y; const dist = Math.sqrt(dx * dx + dy * dy);
-                        if (dist < gameLogicRefs.hitZone && dist > 0) { const forceX = -(dx / dist) * gameLogicRefs.hitForce; const forceY = -(dy / dist) * gameLogicRefs.hitForce; ball.vx += forceX; ball.vy += forceY; setScore(s => s + 1); createSparkles(canvasX, canvasY, 8); playHitSound(); }
-                    }
+                    if (gameLogicRefs.gameState === 'playing') { const ball = ballRef.current; if (ball.y > canvas.height + ball.radius) return; const dx = canvasX - ball.x; const dy = canvasY - ball.y; const dist = Math.sqrt(dx * dx + dy * dy); if (dist < gameLogicRefs.hitZone && dist > 0) { const forceX = -(dx / dist) * gameLogicRefs.hitForce; const forceY = -(dy / dist) * gameLogicRefs.hitForce; ball.vx += forceX; ball.vy += forceY; setScore(s => s + 1); createSparkles(canvasX, canvasY, 8); playHitSound(); } }
                 };
 
                 const handlePointerMove = (e) => {
@@ -194,22 +177,21 @@
                     document.removeEventListener('mouseup', handlePointerUp);
                     document.removeEventListener('touchend', handlePointerUp);
                 };
-            }, []); // Empty dependency array ensures this runs only once.
+            }, []);
 
-            return (
-                <div className="flex flex-col items-center justify-center min-h-screen bg-gradient-to-b from-purple-900 to-indigo-900 p-4">
-                    <div className="bg-white rounded-lg shadow-2xl p-6 relative">
-                        <canvas
-                            ref={canvasRef}
-                            className="border-4 border-purple-600 rounded-lg"
-                            style={{ touchAction: 'none', width: '100%', maxWidth: '400px', height: 'auto' }}
-                        />
-                    </div>
-                </div>
+            return React.createElement("div", { className: "flex flex-col items-center justify-center min-h-screen bg-gradient-to-b from-purple-900 to-indigo-900 p-4" },
+                React.createElement("div", { className: "bg-white rounded-lg shadow-2xl p-6 relative" },
+                    React.createElement("canvas", {
+                        ref: canvasRef,
+                        className: "border-4 border-purple-600 rounded-lg",
+                        style: { touchAction: 'none', width: '100%', maxWidth: '400px', height: 'auto' }
+                    })
+                )
             );
         };
 
-        ReactDOM.render(<BounceGame />, document.getElementById('root'));
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(React.createElement(BounceGame));
     </script>
 </body>
 </html>
