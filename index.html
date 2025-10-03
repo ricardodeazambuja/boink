@@ -17,7 +17,7 @@
 
         const BounceGame = () => {
             const canvasRef = useRef(null);
-            const [gameState, setGameState] = useState('start'); // 'start', 'playing', 'gameover'
+            const [gameState, setGameState] = useState('start');
             const [score, setScore] = useState(0);
             const [highScore, setHighScore] = useState(() => {
                 const saved = localStorage.getItem('bounceGameHighScore');
@@ -41,22 +41,16 @@
                 return saved ? saved === 'true' : true;
             });
 
-            const audioContextRef = useRef(null);
+            const ballRef = useRef({ x: 200, y: 100, vx: 0, vy: 0, radius: 30 });
             const backgroundMusicRef = useRef(null);
             const synthRef = useRef(null);
             const particlesRef = useRef([]);
             const audioInitializedRef = useRef(false);
-            
-            const ballRef = useRef({
-                x: 200,
-                y: 100,
-                vx: 0,
-                vy: 0,
-                radius: 30
-            });
+            const gameOverTriggeredRef = useRef(false);
+            const musicInitializingRef = useRef(false);
+            const isDraggingRef = useRef(false);
 
             const settingsRef = useRef({
-                draggingSlider: null,
                 sliders: {
                 gravity: { x: 50, y: 150, width: 300, min: 0.1, max: 0.8 },
                 hitForce: { x: 50, y: 230, width: 300, min: 5, max: 40 },
@@ -65,8 +59,6 @@
                 soundToggle: { x: 150, y: 390, width: 100, height: 40 }
             });
 
-            const isDraggingRef = useRef(false);
-
             useEffect(() => {
                 const canvas = canvasRef.current;
                 if (!canvas) return;
@@ -74,51 +66,42 @@
                 canvas.width = 400;
                 canvas.height = 600;
 
-                // Initialize audio context and background music
-                const initAudio = async () => {
+                let animationId;
+
+                const initAudio = () => {
                 try {
-                    await Tone.start();
-                    console.log('Tone.js audio context started');
+                    console.log('initAudio called');
                     
-                    // Always try to start music if sound is enabled and we're playing
-                    if (soundEnabled && gameState === 'playing') {
-                    console.log('Attempting to start background music...');
-                    console.log('backgroundMusicRef.current:', backgroundMusicRef.current);
-                    
-                    // Ensure transport is stopped and cleared
-                    if (Tone.Transport.state === 'started') {
-                        Tone.Transport.stop();
+                    if (backgroundMusicRef.current) {
+                    console.log('Music already playing');
+                    return;
                     }
+                    
+                    if (Tone.Transport.state === 'started') {
+                    console.log('Transport already started');
+                    return;
+                    }
+                    
+                    if (soundEnabled && gameState === 'playing') {
+                    console.log('Starting music');
+                    
                     Tone.Transport.cancel();
                     Tone.Transport.position = 0;
                     
-                    // Create synth for melody - brighter anime-style sound
                     if (!synthRef.current) {
                         synthRef.current = new Tone.PolySynth(Tone.Synth, {
                         oscillator: { type: 'triangle' },
-                        envelope: {
-                            attack: 0.005,
-                            decay: 0.1,
-                            sustain: 0.4,
-                            release: 0.2
-                        },
+                        envelope: { attack: 0.005, decay: 0.1, sustain: 0.4, release: 0.2 },
                         volume: -8
                         }).toDestination();
                     }
                     
-                    // Create bass synth - punchy anime bass
                     const bass = new Tone.Synth({
                         oscillator: { type: 'sawtooth' },
-                        envelope: {
-                        attack: 0.01,
-                        decay: 0.2,
-                        sustain: 0.4,
-                        release: 0.3
-                        },
+                        envelope: { attack: 0.01, decay: 0.2, sustain: 0.4, release: 0.3 },
                         volume: -12
                     }).toDestination();
                     
-                    // Japanese pentatonic melody - upbeat anime style
                     const melody = [
                         { note: 'E5', time: '0:0:0', duration: '16n' },
                         { note: 'G5', time: '0:0:1', duration: '16n' },
@@ -132,7 +115,6 @@
                         { note: 'B5', time: '0:3:0', duration: '8n' },
                         { note: 'A5', time: '0:3:2', duration: '16n' },
                         { note: 'G5', time: '0:3:3', duration: '16n' },
-                        
                         { note: 'E5', time: '1:0:0', duration: '16n' },
                         { note: 'G5', time: '1:0:1', duration: '16n' },
                         { note: 'B5', time: '1:0:2', duration: '8n' },
@@ -144,7 +126,6 @@
                         { note: 'G5', time: '1:3:0', duration: '4n' }
                     ];
                     
-                    // Create repeating pattern
                     const melodyPart = new Tone.Part((time, note) => {
                         synthRef.current.triggerAttackRelease(note.note, note.duration, time);
                     }, melody).start(0);
@@ -152,62 +133,52 @@
                     melodyPart.loop = true;
                     melodyPart.loopEnd = '2m';
                     
-                    // Energetic bass pattern - anime style
                     const bassPart = new Tone.Pattern((time, note) => {
                         bass.triggerAttackRelease(note, '8n', time);
                     }, ['E2', 'E2', 'B1', 'E2', 'D2', 'D2', 'A1', 'D2'], 'up').start(0);
                     
                     bassPart.interval = '8n';
-                    
-                    // Fast tempo for excitement
                     Tone.Transport.bpm.value = 160;
                     Tone.Transport.start();
                     
-                    console.log('Background music started successfully!');
+                    console.log('Music started!');
                     backgroundMusicRef.current = { melodyPart, bassPart, bass };
+                    musicInitializingRef.current = false;
                     }
                 } catch (error) {
                     console.error('Error starting audio:', error);
+                    musicInitializingRef.current = false;
                 }
                 };
 
                 const stopBackgroundMusic = () => {
                 if (backgroundMusicRef.current) {
-                    console.log('Stopping background music');
+                    console.log('Stopping music');
                     try {
                     Tone.Transport.stop();
                     Tone.Transport.cancel();
-                    if (backgroundMusicRef.current.melodyPart) {
-                        backgroundMusicRef.current.melodyPart.dispose();
-                    }
-                    if (backgroundMusicRef.current.bassPart) {
-                        backgroundMusicRef.current.bassPart.dispose();
-                    }
-                    if (backgroundMusicRef.current.bass) {
-                        backgroundMusicRef.current.bass.dispose();
-                    }
+                    if (backgroundMusicRef.current.melodyPart) backgroundMusicRef.current.melodyPart.dispose();
+                    if (backgroundMusicRef.current.bassPart) backgroundMusicRef.current.bassPart.dispose();
+                    if (backgroundMusicRef.current.bass) backgroundMusicRef.current.bass.dispose();
                     } catch (e) {
-                    console.log('Error stopping music:', e);
+                    console.log('Error stopping:', e);
                     }
                     backgroundMusicRef.current = null;
+                    musicInitializingRef.current = false;
                 }
                 };
 
                 const playHitSound = () => {
                 if (!soundEnabled) return;
                 try {
+                    if (Tone.context.state === 'suspended') {
+                    Tone.context.resume();
+                    }
                     const synth = new Tone.Synth({
                     oscillator: { type: 'sine' },
-                    envelope: {
-                        attack: 0.005,
-                        decay: 0.1,
-                        sustain: 0.0,
-                        release: 0.1
-                    }
+                    envelope: { attack: 0.005, decay: 0.1, sustain: 0, release: 0.1 }
                     }).toDestination();
-                    
                     synth.triggerAttackRelease('C6', '16n');
-                    
                     setTimeout(() => synth.dispose(), 200);
                 } catch (error) {
                     console.log('Error playing hit sound:', error);
@@ -219,8 +190,7 @@
                     const angle = (Math.PI * 2 * i) / count + Math.random() * 0.5;
                     const speed = 2 + Math.random() * 3;
                     particlesRef.current.push({
-                    x,
-                    y,
+                    x, y,
                     vx: Math.cos(angle) * speed,
                     vy: Math.sin(angle) * speed,
                     life: 1,
@@ -230,33 +200,18 @@
                 }
                 };
 
-                let animationId;
-
-                const drawButton = (text, x, y, width, height) => {
-                ctx.fillStyle = 'rgba(139, 92, 246, 0.9)';
-                ctx.fillRect(x, y, width, height);
-                ctx.fillStyle = '#fff';
-                ctx.font = 'bold 20px Arial';
-                ctx.textAlign = 'center';
-                ctx.textBaseline = 'middle';
-                ctx.fillText(text, x + width / 2, y + height / 2);
-                };
-
                 const drawSlider = (label, value, sliderKey) => {
                 const slider = settingsRef.current.sliders[sliderKey];
                 const { x, y, width, min, max } = slider;
                 
-                // Label
                 ctx.fillStyle = '#fff';
                 ctx.font = 'bold 16px Arial';
                 ctx.textAlign = 'left';
                 ctx.fillText(`${label}: ${value.toFixed(sliderKey === 'gravity' ? 2 : 0)}${sliderKey === 'hitZone' ? 'px' : ''}`, x, y - 10);
                 
-                // Track
                 ctx.fillStyle = 'rgba(255, 255, 255, 0.3)';
                 ctx.fillRect(x, y, width, 6);
                 
-                // Handle
                 const handleX = x + ((value - min) / (max - min)) * width;
                 ctx.fillStyle = '#fff';
                 ctx.beginPath();
@@ -269,14 +224,18 @@
                 };
 
                 const handleCanvasClick = (e) => {
-                e.preventDefault(); // Prevent default touch behavior
+                e.preventDefault();
                 
-                // Initialize audio on first interaction (critical for mobile)
-                if (!audioInitializedRef.current && soundEnabled) {
-                    Tone.start().then(() => {
-                    console.log('Audio initialized on first touch');
+                if (soundEnabled) {
+                    if (!audioInitializedRef.current) {
+                    Tone.start();
                     audioInitializedRef.current = true;
-                    });
+                    console.log('Audio initialized (iOS compatible)');
+                    }
+                    if (Tone.context.state === 'suspended') {
+                    Tone.context.resume();
+                    console.log('Audio context resumed');
+                    }
                 }
                 
                 const rect = canvas.getBoundingClientRect();
@@ -287,27 +246,21 @@
                 const canvasX = clickX * scaleX;
                 const canvasY = clickY * scaleY;
 
-                // Settings icon click (top-right) - only in non-playing states
                 if ((gameState === 'start' || gameState === 'gameover') && isPointInRect(canvasX, canvasY, 350, 10, 40, 40)) {
                     setShowSettings(!showSettings);
-                    return; // Exit immediately to prevent fall-through
+                    return;
                 }
 
-                // If settings are open, only handle settings interactions
                 if (showSettings) {
-                    // Sound toggle button
                     const soundToggle = settingsRef.current.soundToggle;
                     if (isPointInRect(canvasX, canvasY, soundToggle.x, soundToggle.y, soundToggle.width, soundToggle.height)) {
                     const newValue = !soundEnabled;
                     setSoundEnabled(newValue);
                     localStorage.setItem('bounceGameSound', newValue.toString());
-                    if (!newValue) {
-                        stopBackgroundMusic();
-                    }
+                    if (!newValue) stopBackgroundMusic();
                     return;
                     }
 
-                    // Settings slider interaction
                     Object.entries(settingsRef.current.sliders).forEach(([key, slider]) => {
                     if (isPointInRect(canvasX, canvasY, slider.x - 12, slider.y - 12, slider.width + 24, 30)) {
                         isDraggingRef.current = key;
@@ -327,33 +280,28 @@
                         }
                     }
                     });
-                    return; // Exit if settings are open
+                    return;
                 }
 
-                // Start screen - only if settings are closed
                 if (gameState === 'start') {
                     setGameState('playing');
                     ballRef.current = { x: 200, y: 100, vx: 0, vy: 0, radius: 30 };
                     setScore(0);
                     particlesRef.current = [];
+                    gameOverTriggeredRef.current = false;
                     return;
                 }
 
-                // Game over screen - only if settings are closed
                 if (gameState === 'gameover') {
                     setGameState('start');
                     stopBackgroundMusic();
                     return;
                 }
 
-                // Playing - ball interaction
                 if (gameState === 'playing') {
                     const ball = ballRef.current;
                     
-                    // Don't allow hits if ball is already below screen
-                    if (ball.y > canvas.height + ball.radius) {
-                    return;
-                    }
+                    if (ball.y > canvas.height + ball.radius) return;
                     
                     const dx = canvasX - ball.x;
                     const dy = canvasY - ball.y;
@@ -414,15 +362,13 @@
                 const gameLoop = () => {
                 const ball = ballRef.current;
 
-                // Start music when entering playing state
-                if (gameState === 'playing' && soundEnabled && !backgroundMusicRef.current) {
-                    // Ensure Transport is ready before starting music
+                if (gameState === 'playing' && soundEnabled && !backgroundMusicRef.current && !musicInitializingRef.current) {
                     if (Tone.Transport.state !== 'started') {
+                    musicInitializingRef.current = true;
                     initAudio();
                     }
                 }
 
-                // Physics update
                 if (gameState === 'playing') {
                     ball.vy += gravity;
                     ball.x += ball.vx;
@@ -430,7 +376,6 @@
                     ball.vx *= 0.99;
                     ball.vy *= 0.995;
 
-                    // Bounce off walls
                     if (ball.x < ball.radius) {
                     ball.x = ball.radius;
                     ball.vx = Math.abs(ball.vx) * 0.7;
@@ -442,32 +387,29 @@
                     createSparkles(ball.x, ball.y, 5);
                     }
 
-                    // Game over if falls off bottom - immediately stop processing
-                    if (ball.y - ball.radius > canvas.height) {
+                    if (ball.y - ball.radius > canvas.height && !gameOverTriggeredRef.current) {
+                    gameOverTriggeredRef.current = true;
                     stopBackgroundMusic();
                     if (score > highScore) {
                         setHighScore(score);
                         localStorage.setItem('bounceGameHighScore', score.toString());
                     }
                     setGameState('gameover');
-                    return; // Exit game loop immediately
+                    return;
                     }
                 }
 
-                // Update particles
                 particlesRef.current = particlesRef.current.filter(p => {
                     p.x += p.vx;
                     p.y += p.vy;
-                    p.vy += 0.15; // Gravity on particles
+                    p.vy += 0.15;
                     p.life -= 0.02;
                     return p.life > 0;
                 });
 
-                // Draw
                 ctx.fillStyle = '#1a1a2e';
                 ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-                // Animated background stars (always visible)
                 const time = Date.now() * 0.001;
                 for (let i = 0; i < 30; i++) {
                     const x = (i * 73) % canvas.width;
@@ -480,15 +422,13 @@
                     ctx.fill();
                 }
 
-                // Settings icon (gear)
                 if (gameState !== 'playing') {
-                    ctx.fillStyle = showSettings ? '#8b5cf6' : 'rgba(255, 255, 255, 0.5)';
+                    ctx.fillStyle = 'rgba(255, 255, 255, 0.5)';
                     ctx.font = 'bold 30px Arial';
                     ctx.textAlign = 'center';
                     ctx.fillText('⚙️', 370, 35);
                 }
 
-                // Settings panel
                 if (showSettings && gameState !== 'playing') {
                     ctx.fillStyle = 'rgba(0, 0, 0, 0.85)';
                     ctx.fillRect(30, 80, 340, 360);
@@ -502,7 +442,6 @@
                     drawSlider('Hit Force', hitForce, 'hitForce');
                     drawSlider('Hit Zone', hitZone, 'hitZone');
 
-                    // Sound toggle button
                     const soundToggle = settingsRef.current.soundToggle;
                     ctx.fillStyle = soundEnabled ? '#10b981' : '#ef4444';
                     ctx.fillRect(soundToggle.x, soundToggle.y, soundToggle.width, soundToggle.height);
@@ -513,16 +452,13 @@
                     ctx.fillText(soundEnabled ? '🔊 ON' : '🔇 OFF', soundToggle.x + soundToggle.width / 2, soundToggle.y + soundToggle.height / 2);
                 }
 
-                // Start screen
                 if (gameState === 'start' && !showSettings) {
-                    // Gradient background overlay
                     const gradient = ctx.createRadialGradient(200, 300, 50, 200, 300, 300);
                     gradient.addColorStop(0, 'rgba(138, 43, 226, 0.3)');
                     gradient.addColorStop(1, 'rgba(0, 0, 0, 0)');
                     ctx.fillStyle = gradient;
                     ctx.fillRect(0, 0, canvas.width, canvas.height);
                     
-                    // Animated title with glow
                     const titleY = 200 + Math.sin(time * 2) * 8;
                     ctx.shadowBlur = 30;
                     ctx.shadowColor = '#ff00ff';
@@ -532,7 +468,6 @@
                     ctx.fillText('BOINK!', 200, titleY);
                     ctx.shadowBlur = 0;
                     
-                    // Anime-style speed lines
                     ctx.strokeStyle = 'rgba(255, 255, 255, 0.1)';
                     ctx.lineWidth = 2;
                     for (let i = 0; i < 8; i++) {
@@ -547,13 +482,11 @@
                     ctx.stroke();
                     }
                     
-                    // Floating action text with pulse
                     const pulseAlpha = 0.5 + Math.sin(time * 3) * 0.3;
                     ctx.fillStyle = `rgba(255, 255, 255, ${pulseAlpha})`;
                     ctx.font = 'bold 24px Arial';
                     ctx.fillText('TAP TO START', 200, 400);
                     
-                    // Decorative corner elements
                     ctx.fillStyle = 'rgba(255, 100, 255, 0.3)';
                     ctx.beginPath();
                     ctx.moveTo(0, 0);
@@ -574,9 +507,7 @@
                     }
                 }
 
-                // Playing screen
                 if (gameState === 'playing') {
-                    // Draw particles/sparkles
                     particlesRef.current.forEach(p => {
                     ctx.fillStyle = p.color;
                     ctx.globalAlpha = p.life;
@@ -586,7 +517,6 @@
                     });
                     ctx.globalAlpha = 1;
 
-                    // Score
                     ctx.fillStyle = 'rgba(255, 255, 255, 0.9)';
                     ctx.font = 'bold 24px Arial';
                     ctx.textAlign = 'left';
@@ -596,13 +526,11 @@
                     ctx.fillStyle = 'rgba(255, 255, 255, 0.7)';
                     ctx.fillText(`Best: ${highScore}`, 15, 60);
 
-                    // Ball
                     ctx.fillStyle = '#fff';
                     ctx.beginPath();
                     ctx.arc(ball.x, ball.y, ball.radius, 0, Math.PI * 2);
                     ctx.fill();
 
-                    // Velocity indicator
                     ctx.strokeStyle = '#0ff';
                     ctx.lineWidth = 3;
                     ctx.beginPath();
@@ -610,7 +538,6 @@
                     ctx.lineTo(ball.x + ball.vx * 3, ball.y + ball.vy * 3);
                     ctx.stroke();
 
-                    // Hit zone
                     ctx.strokeStyle = 'rgba(0, 255, 0, 0.3)';
                     ctx.lineWidth = 2;
                     ctx.beginPath();
@@ -618,16 +545,13 @@
                     ctx.stroke();
                 }
 
-                // Game over screen
                 if (gameState === 'gameover' && !showSettings) {
-                    // Dark overlay with gradient
                     const gradient = ctx.createRadialGradient(200, 300, 50, 200, 300, 400);
                     gradient.addColorStop(0, 'rgba(139, 0, 0, 0.5)');
                     gradient.addColorStop(1, 'rgba(0, 0, 0, 0.8)');
                     ctx.fillStyle = gradient;
                     ctx.fillRect(0, 0, canvas.width, canvas.height);
                     
-                    // Dramatic title with shadow
                     ctx.shadowBlur = 30;
                     ctx.shadowColor = '#ff0000';
                     ctx.fillStyle = '#ff4444';
@@ -637,7 +561,6 @@
                     ctx.fillText('OVER', 200, 240);
                     ctx.shadowBlur = 0;
                     
-                    // Score box with border
                     ctx.strokeStyle = '#fff';
                     ctx.lineWidth = 3;
                     ctx.strokeRect(100, 270, 200, 70);
@@ -647,7 +570,6 @@
                     ctx.fillText(`${score}`, 200, 315);
                     
                     if (score === highScore && score > 0) {
-                    // New high score celebration
                     ctx.shadowBlur = 20;
                     ctx.shadowColor = '#ffd700';
                     ctx.font = 'bold 28px Arial';
@@ -656,7 +578,6 @@
                     ctx.fillText('★ NEW RECORD! ★', 200, starY);
                     ctx.shadowBlur = 0;
                     
-                    // Celebration sparkles
                     for (let i = 0; i < 5; i++) {
                         const angle = time * 2 + (i * Math.PI * 2) / 5;
                         const dist = 80 + Math.sin(time * 3 + i) * 10;
@@ -673,13 +594,11 @@
                     ctx.fillText(`Best: ${highScore}`, 200, 370);
                     }
                     
-                    // Pulsing continue text
                     const continueAlpha = 0.6 + Math.sin(time * 3) * 0.3;
                     ctx.font = 'bold 22px Arial';
                     ctx.fillStyle = `rgba(255, 255, 255, ${continueAlpha})`;
                     ctx.fillText('TAP TO CONTINUE', 200, 480);
                     
-                    // Decorative lines
                     ctx.strokeStyle = 'rgba(255, 255, 255, 0.3)';
                     ctx.lineWidth = 2;
                     ctx.beginPath();
