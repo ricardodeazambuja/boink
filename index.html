@@ -14,7 +14,7 @@
     <div id="root"></div>
     <script type="text/babel">
         const { useState, useEffect, useRef } = React;
-        
+
         const BounceGame = () => {
             const canvasRef = useRef(null);
             const [gameState, setGameState] = useState('start'); // 'start', 'playing', 'gameover'
@@ -45,6 +45,7 @@
             const backgroundMusicRef = useRef(null);
             const synthRef = useRef(null);
             const particlesRef = useRef([]);
+            const audioInitializedRef = useRef(false);
             
             const ballRef = useRef({
                 x: 200,
@@ -268,6 +269,16 @@
                 };
 
                 const handleCanvasClick = (e) => {
+                e.preventDefault(); // Prevent default touch behavior
+                
+                // Initialize audio on first interaction (critical for mobile)
+                if (!audioInitializedRef.current && soundEnabled) {
+                    Tone.start().then(() => {
+                    console.log('Audio initialized on first touch');
+                    audioInitializedRef.current = true;
+                    });
+                }
+                
                 const rect = canvas.getBoundingClientRect();
                 const scaleX = canvas.width / rect.width;
                 const scaleY = canvas.height / rect.height;
@@ -276,14 +287,15 @@
                 const canvasX = clickX * scaleX;
                 const canvasY = clickY * scaleY;
 
-                // Settings icon click (top-right)
-                if (gameState !== 'playing' && isPointInRect(canvasX, canvasY, 350, 10, 40, 40)) {
+                // Settings icon click (top-right) - only in non-playing states
+                if ((gameState === 'start' || gameState === 'gameover') && isPointInRect(canvasX, canvasY, 350, 10, 40, 40)) {
                     setShowSettings(!showSettings);
-                    return;
+                    return; // Exit immediately to prevent fall-through
                 }
 
-                // Sound toggle button
-                if (showSettings && gameState !== 'playing') {
+                // If settings are open, only handle settings interactions
+                if (showSettings) {
+                    // Sound toggle button
                     const soundToggle = settingsRef.current.soundToggle;
                     if (isPointInRect(canvasX, canvasY, soundToggle.x, soundToggle.y, soundToggle.width, soundToggle.height)) {
                     const newValue = !soundEnabled;
@@ -294,10 +306,8 @@
                     }
                     return;
                     }
-                }
 
-                // Settings slider interaction
-                if (showSettings && gameState !== 'playing') {
+                    // Settings slider interaction
                     Object.entries(settingsRef.current.sliders).forEach(([key, slider]) => {
                     if (isPointInRect(canvasX, canvasY, slider.x - 12, slider.y - 12, slider.width + 24, 30)) {
                         isDraggingRef.current = key;
@@ -317,18 +327,11 @@
                         }
                     }
                     });
-                    return;
+                    return; // Exit if settings are open
                 }
 
-                // Start screen - don't allow if settings are open
-                if (gameState === 'start' && !showSettings) {
-                    // Pre-warm Tone.js on start screen interaction
-                    if (soundEnabled) {
-                    Tone.start().then(() => {
-                        console.log('Audio context pre-warmed');
-                    });
-                    }
-                    
+                // Start screen - only if settings are closed
+                if (gameState === 'start') {
                     setGameState('playing');
                     ballRef.current = { x: 200, y: 100, vx: 0, vy: 0, radius: 30 };
                     setScore(0);
@@ -336,15 +339,15 @@
                     return;
                 }
 
-                // Game over screen - don't allow if settings are open
-                if (gameState === 'gameover' && !showSettings) {
+                // Game over screen - only if settings are closed
+                if (gameState === 'gameover') {
                     setGameState('start');
                     stopBackgroundMusic();
                     return;
                 }
 
-                // Playing - ball interaction (ONLY if we're actually playing)
-                if (gameState === 'playing' && !showSettings) {
+                // Playing - ball interaction
+                if (gameState === 'playing') {
                     const ball = ballRef.current;
                     
                     // Don't allow hits if ball is already below screen
@@ -399,10 +402,10 @@
                 isDraggingRef.current = false;
                 };
 
+                canvas.addEventListener('touchstart', handleCanvasClick, { passive: false });
                 canvas.addEventListener('mousedown', handleCanvasClick);
-                canvas.addEventListener('touchstart', handleCanvasClick);
                 canvas.addEventListener('mousemove', handleMouseMove);
-                canvas.addEventListener('touchmove', handleMouseMove);
+                canvas.addEventListener('touchmove', handleMouseMove, { passive: false });
                 canvas.addEventListener('mouseup', handleMouseUp);
                 canvas.addEventListener('touchend', handleMouseUp);
                 document.addEventListener('mouseup', handleMouseUp);
@@ -439,14 +442,15 @@
                     createSparkles(ball.x, ball.y, 5);
                     }
 
-                    // Game over if falls off bottom
-                    if (ball.y > canvas.height + ball.radius) {
-                    setGameState('gameover');
+                    // Game over if falls off bottom - immediately stop processing
+                    if (ball.y - ball.radius > canvas.height) {
                     stopBackgroundMusic();
                     if (score > highScore) {
                         setHighScore(score);
                         localStorage.setItem('bounceGameHighScore', score.toString());
                     }
+                    setGameState('gameover');
+                    return; // Exit game loop immediately
                     }
                 }
 
@@ -692,8 +696,8 @@
                 return () => {
                 cancelAnimationFrame(animationId);
                 stopBackgroundMusic();
-                canvas.removeEventListener('mousedown', handleCanvasClick);
                 canvas.removeEventListener('touchstart', handleCanvasClick);
+                canvas.removeEventListener('mousedown', handleCanvasClick);
                 canvas.removeEventListener('mousemove', handleMouseMove);
                 canvas.removeEventListener('touchmove', handleMouseMove);
                 canvas.removeEventListener('mouseup', handleMouseUp);
