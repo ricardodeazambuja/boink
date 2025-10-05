@@ -21,7 +21,7 @@
             const [score, setScore] = useState(0);
             const [highScore, setHighScore] = useState(() => parseInt(localStorage.getItem('bounceGameHighScore') || '0', 10));
             const [showSettings, setShowSettings] = useState(false);
-            const [gravity, setGravity] = useState(() => parseFloat(localStorage.getItem('bounceGameGravity') || '0.2'));
+            const [gravity, setGravity] = useState(() => parseFloat(localStorage.getItem('bounceGameGravity') || '0.35'));
             const [hitForce, setHitForce] = useState(() => parseInt(localStorage.getItem('bounceGameHitForce') || '30', 10));
             const [hitZone, setHitZone] = useState(() => parseInt(localStorage.getItem('bounceGameHitZone') || '90', 10));
             const [soundEnabled, setSoundEnabled] = useState(() => localStorage.getItem('bounceGameSound') !== 'false');
@@ -238,7 +238,12 @@
                             ball.vx *= Math.pow(0.99, speedFactor);
                             ball.vy *= Math.pow(0.995, speedFactor);
 
-                            if (ball.x < ball.radius || ball.x > canvas.width - ball.radius) { ball.vx *= -0.7; ball.x = Math.max(ball.radius, Math.min(canvas.width - ball.radius, ball.x)); createSparkles(ball.x, ball.y, 5); }
+                            if (ball.x < ball.radius || ball.x > canvas.width - ball.radius) {
+                                ball.vx *= -0.7;
+                                ball.x = Math.max(ball.radius, Math.min(canvas.width - ball.radius, ball.x));
+                                createSparkles(ball.x, ball.y, 5);
+                                setScore(s => s + 1);
+                            }
                             if (ball.y - ball.radius > canvas.height && !gameOverTriggered) { gameOverTriggered = true; stopBackgroundMusic(); if (refs.score > refs.highScore) { setHighScore(refs.score); localStorage.setItem('bounceGameHighScore', refs.score.toString()); } setGameState('gameover'); }
                         }
                         const particles = particlesRef.current;
