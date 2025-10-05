@@ -70,6 +70,18 @@
                     console.error("Audio could not be unlocked:", e);
                 }
             }, []);
+            
+            // Centralized function to handle scoring and level-up logic
+            const incrementScore = () => {
+                setScore(s => {
+                    const newScore = s + 1;
+                    if (newScore > 0 && newScore % 10 === 0) {
+                        const newLevel = (newScore / 10) + 1;
+                        transitionRef.current = { active: true, opacity: 2, levelText: `LEVEL ${newLevel}` };
+                    }
+                    return newScore;
+                });
+            };
 
             const playHitSound = useCallback(() => {
                 if (!gameLogicRefs.soundEnabled || !hitSynthRef.current) return;
@@ -114,7 +126,7 @@
                 const handlePointerDown = async (e) => {
                     e.preventDefault();
                     if (!gameLogicRefs.audioUnlocked) { await handleAudioUnlock(); }
-                    if (transitionRef.current.active) return; // Ignore clicks during transition
+                    if (transitionRef.current.active) return;
 
                     const rect = canvas.getBoundingClientRect();
                     const canvasX = ((e.clientX || e.touches[0].clientX) - rect.left) * (canvas.width / rect.width);
@@ -151,15 +163,7 @@
                             ball.vx += forceX;
                             ball.vy += forceY;
                             
-                            setScore(s => {
-                                const newScore = s + 1;
-                                if (newScore > 0 && newScore % 10 === 0) {
-                                    const newLevel = (newScore / 10) + 1;
-                                    transitionRef.current = { active: true, opacity: 2, levelText: `LEVEL ${newLevel}` };
-                                }
-                                return newScore;
-                            });
-
+                            incrementScore(); // Use the new centralized function
                             createSparkles(canvasX, canvasY, 8);
                             playHitSound();
                         }
@@ -209,7 +213,6 @@
                             const newLevel = parseInt(transition.levelText.split(' ')[1]);
                             setLevel(newLevel);
                             setGravity(g => Math.min(1.0, g * 1.15));
-                            setHitZone(hz => Math.max(50, hz * 0.95));
                             ballRef.current = { x: 200, y: 100, vx: 0, vy: 0, radius: Math.max(10, ballRef.current.radius * 0.95) };
                             transition.isStateUpdated = true;
                         }
@@ -230,7 +233,6 @@
                             transition.isStateUpdated = false;
                         }
                     } else {
-                        // --- NORMAL GAME LOGIC ---
                         const ball = ballRef.current;
                         if (refs.gameState === 'playing') {
                             ball.vy += refs.gravity * speedFactor;
@@ -243,7 +245,7 @@
                                 ball.vx *= -0.7;
                                 ball.x = Math.max(ball.radius, Math.min(canvas.width - ball.radius, ball.x));
                                 createSparkles(ball.x, ball.y, 5);
-                                setScore(s => s + 1);
+                                incrementScore(); // Use the new centralized function
                             }
                             if (ball.y - ball.radius > canvas.height && !gameOverTriggered) { gameOverTriggered = true; stopBackgroundMusic(); if (refs.score > refs.highScore) { setHighScore(refs.score); localStorage.setItem('bounceGameHighScore', refs.score.toString()); } setGameState('gameover'); }
                         }
