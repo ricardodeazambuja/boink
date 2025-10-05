@@ -209,6 +209,7 @@
                             const newLevel = parseInt(transition.levelText.split(' ')[1]);
                             setLevel(newLevel);
                             setGravity(g => Math.min(1.0, g * 1.15));
+                            setHitZone(hz => Math.max(50, hz * 0.95));
                             ballRef.current = { x: 200, y: 100, vx: 0, vy: 0, radius: Math.max(10, ballRef.current.radius * 0.95) };
                             transition.isStateUpdated = true;
                         }
