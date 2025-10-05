@@ -21,11 +21,12 @@
             const [score, setScore] = useState(0);
             const [highScore, setHighScore] = useState(() => parseInt(localStorage.getItem('bounceGameHighScore') || '0', 10));
             const [showSettings, setShowSettings] = useState(false);
-            const [gravity, setGravity] = useState(() => parseFloat(localStorage.getItem('bounceGameGravity') || '0.5'));
+            const [gravity, setGravity] = useState(() => parseFloat(localStorage.getItem('bounceGameGravity') || '0.2'));
             const [hitForce, setHitForce] = useState(() => parseInt(localStorage.getItem('bounceGameHitForce') || '30', 10));
-            const [hitZone, setHitZone] = useState(() => parseInt(localStorage.getItem('bounceGameHitZone') || '70', 10));
+            const [hitZone, setHitZone] = useState(() => parseInt(localStorage.getItem('bounceGameHitZone') || '90', 10));
             const [soundEnabled, setSoundEnabled] = useState(() => localStorage.getItem('bounceGameSound') !== 'false');
             const [audioUnlocked, setAudioUnlocked] = useState(false);
+            const [level, setLevel] = useState(1);
 
             const gameLogicRefs = useRef({}).current;
             gameLogicRefs.gameState = gameState;
@@ -37,10 +38,12 @@
             gameLogicRefs.highScore = highScore;
             gameLogicRefs.showSettings = showSettings;
             gameLogicRefs.audioUnlocked = audioUnlocked;
+            gameLogicRefs.level = level;
 
             const ballRef = useRef({ x: 200, y: 100, vx: 0, vy: 0, radius: 30 });
             const particlesRef = useRef([]);
             const isDraggingRef = useRef(null);
+            const transitionRef = useRef({ active: false, opacity: 0, levelText: '' });
             
             const hitSynthRef = useRef(null);
             const musicSynthRef = useRef(null);
@@ -103,7 +106,7 @@
                 canvas.width = 400; canvas.height = 600;
                 let animationId;
                 let gameOverTriggered = false;
-                let lastTime = 0; // To track time for delta time calculation
+                let lastTime = 0;
 
                 const createSparkles = (x, y, count) => { for (let i = 0; i < count; i++) { const angle = (Math.PI * 2 * i) / count + Math.random() * 0.5; const speed = 2 + Math.random() * 3; particlesRef.current.push({ x, y, vx: Math.cos(angle) * speed, vy: Math.sin(angle) * speed, life: 1, size: 2 + Math.random() * 3, color: `hsl(${Math.random() * 60 + 40}, 100%, 70%)` }); } };
                 const isPointInRect = (px, py, x, y, width, height) => { return px >= x && px <= x + width && py >= y && py <= y + height; };
@@ -111,9 +114,12 @@
                 const handlePointerDown = async (e) => {
                     e.preventDefault();
                     if (!gameLogicRefs.audioUnlocked) { await handleAudioUnlock(); }
+                    if (transitionRef.current.active) return; // Ignore clicks during transition
+
                     const rect = canvas.getBoundingClientRect();
                     const canvasX = ((e.clientX || e.touches[0].clientX) - rect.left) * (canvas.width / rect.width);
                     const canvasY = ((e.clientY || e.touches[0].clientY) - rect.top) * (canvas.height / rect.height);
+
                     if (gameLogicRefs.gameState !== 'playing' && isPointInRect(canvasX, canvasY, 350, 10, 40, 40)) { setShowSettings(s => !s); return; }
                     if (gameLogicRefs.showSettings) {
                         const soundToggle = settingsRef.current.soundToggle;
@@ -121,9 +127,43 @@
                         for (const [key, slider] of Object.entries(settingsRef.current.sliders)) { if (isPointInRect(canvasX, canvasY, slider.x - 12, slider.y - 12, slider.width + 24, 30)) { isDraggingRef.current = key; handlePointerMove(e); return; } }
                         return;
                     }
-                    if (gameLogicRefs.gameState === 'start') { setGameState('playing'); ballRef.current = { x: 200, y: 100, vx: 0, vy: 0, radius: 30 }; setScore(0); particlesRef.current = []; gameOverTriggered = false; startBackgroundMusic(); return; }
+                    if (gameLogicRefs.gameState === 'start') {
+                        setGameState('playing');
+                        ballRef.current = { x: 200, y: 100, vx: 0, vy: 0, radius: 30 };
+                        setScore(0);
+                        setLevel(1);
+                        setGravity(parseFloat(localStorage.getItem('bounceGameGravity') || '0.2'));
+                        particlesRef.current = [];
+                        gameOverTriggered = false;
+                        startBackgroundMusic();
+                        return;
+                    }
                     if (gameLogicRefs.gameState === 'gameover') { setGameState('start'); stopBackgroundMusic(); return; }
-                    if (gameLogicRefs.gameState === 'playing') { const ball = ballRef.current; if (ball.y > canvas.height + ball.radius) return; const dx = canvasX - ball.x; const dy = canvasY - ball.y; const dist = Math.sqrt(dx * dx + dy * dy); if (dist < gameLogicRefs.hitZone && dist > 0) { const forceX = -(dx / dist) * gameLogicRefs.hitForce; const forceY = -(dy / dist) * gameLogicRefs.hitForce; ball.vx += forceX; ball.vy += forceY; setScore(s => s + 1); createSparkles(canvasX, canvasY, 8); playHitSound(); } }
+                    if (gameLogicRefs.gameState === 'playing') {
+                        const ball = ballRef.current;
+                        if (ball.y > canvas.height + ball.radius) return;
+                        const dx = canvasX - ball.x;
+                        const dy = canvasY - ball.y;
+                        const dist = Math.sqrt(dx * dx + dy * dy);
+                        if (dist < gameLogicRefs.hitZone && dist > 0) {
+                            const forceX = -(dx / dist) * gameLogicRefs.hitForce;
+                            const forceY = -(dy / dist) * gameLogicRefs.hitForce;
+                            ball.vx += forceX;
+                            ball.vy += forceY;
+                            
+                            setScore(s => {
+                                const newScore = s + 1;
+                                if (newScore > 0 && newScore % 10 === 0) {
+                                    const newLevel = (newScore / 10) + 1;
+                                    transitionRef.current = { active: true, opacity: 2, levelText: `LEVEL ${newLevel}` };
+                                }
+                                return newScore;
+                            });
+
+                            createSparkles(canvasX, canvasY, 8);
+                            playHitSound();
+                        }
+                    }
                 };
 
                 const handlePointerMove = (e) => {
@@ -151,82 +191,66 @@
                 document.addEventListener('touchend', handlePointerUp);
 
                 const gameLoop = (currentTime) => {
-                    if (!lastTime) {
-                        lastTime = currentTime;
-                    }
-                    const deltaTime = (currentTime - lastTime) / 1000; // Time in seconds
+                    if (!lastTime) { lastTime = currentTime; }
+                    const deltaTime = (currentTime - lastTime) / 1000;
                     lastTime = currentTime;
-                    const speedFactor = deltaTime * 60; // A multiplier to keep game speed consistent
+                    const speedFactor = deltaTime * 60;
+                    const refs = gameLogicRefs;
 
-                    const refs = gameLogicRefs; const ball = ballRef.current; 
-                    if (refs.gameState === 'playing') { 
-                        ball.vy += refs.gravity * speedFactor; 
-                        ball.x += ball.vx * speedFactor; 
-                        ball.y += ball.vy * speedFactor; 
-                        ball.vx *= Math.pow(0.99, speedFactor); 
-                        ball.vy *= Math.pow(0.995, speedFactor);
-                        
-                        if (ball.x < ball.radius || ball.x > canvas.width - ball.radius) { 
-                            ball.vx *= -0.7; 
-                            ball.x = Math.max(ball.radius, Math.min(canvas.width - ball.radius, ball.x)); 
-                            createSparkles(ball.x, ball.y, 5); 
-                        } 
-                        if (ball.y - ball.radius > canvas.height && !gameOverTriggered) { 
-                            gameOverTriggered = true; 
-                            stopBackgroundMusic(); 
-                            if (refs.score > refs.highScore) { 
-                                setHighScore(refs.score); 
-                                localStorage.setItem('bounceGameHighScore', refs.score.toString()); 
-                            } 
-                            setGameState('gameover'); 
-                        } 
-                    }
-                    const particles = particlesRef.current; 
-                    for (let i = particles.length - 1; i >= 0; i--) { 
-                        const p = particles[i]; 
-                        p.x += p.vx * speedFactor; 
-                        p.y += p.vy * speedFactor; 
-                        p.vy += 0.15 * speedFactor; 
-                        p.life -= 0.02 * speedFactor; 
-                        if (p.life <= 0) { 
-                            particles.splice(i, 1); 
-                        } 
-                    }
-                    ctx.fillStyle = '#1a1a2e'; ctx.fillRect(0, 0, canvas.width, canvas.height); const time = Date.now() * 0.001;
+                    ctx.fillStyle = '#1a1a2e';
+                    ctx.fillRect(0, 0, canvas.width, canvas.height);
+                    const time = Date.now() * 0.001;
                     for (let i = 0; i < 30; i++) { const x = (i * 73) % canvas.width; const y = ((i * 127 + time * 20) % canvas.height); const size = 1 + (i % 3); const alpha = 0.3 + Math.sin(time + i) * 0.3; ctx.fillStyle = `rgba(255, 255, 255, ${alpha})`; ctx.beginPath(); ctx.arc(x, y, size, 0, Math.PI * 2); ctx.fill(); }
-                    if (refs.gameState !== 'playing') { ctx.fillStyle = 'rgba(255, 255, 255, 0.5)'; ctx.font = 'bold 30px Arial'; ctx.textAlign = 'center'; ctx.fillText('⚙️', 370, 35); }
-                    if (refs.showSettings && refs.gameState !== 'playing') { ctx.fillStyle = 'rgba(0, 0, 0, 0.85)'; ctx.fillRect(30, 80, 340, 360); ctx.fillStyle = '#fff'; ctx.font = 'bold 24px Arial'; ctx.textAlign = 'center'; ctx.fillText('SETTINGS', 200, 120); const drawSlider = (label, value, sliderKey) => { const slider = settingsRef.current.sliders[sliderKey]; const { x, y, width, min, max } = slider; ctx.fillStyle = '#fff'; ctx.font = 'bold 16px Arial'; ctx.textAlign = 'left'; ctx.fillText(`${label}: ${value.toFixed(sliderKey === 'gravity' ? 2 : 0)}${sliderKey === 'hitZone' ? 'px' : ''}`, x, y - 10); ctx.fillStyle = 'rgba(255, 255, 255, 0.3)'; ctx.fillRect(x, y, width, 6); const handleX = x + ((value - min) / (max - min)) * width; ctx.fillStyle = '#fff'; ctx.beginPath(); ctx.arc(handleX, y + 3, 12, 0, Math.PI * 2); ctx.fill(); }; drawSlider('Gravity', refs.gravity, 'gravity'); drawSlider('Hit Force', refs.hitForce, 'hitForce'); drawSlider('Hit Zone', refs.hitZone, 'hitZone'); const soundToggle = settingsRef.current.soundToggle; ctx.fillStyle = refs.soundEnabled ? '#10b981' : '#ef4444'; ctx.fillRect(soundToggle.x, soundToggle.y, soundToggle.width, soundToggle.height); ctx.fillStyle = '#fff'; ctx.font = 'bold 16px Arial'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText(refs.soundEnabled ? '🔊 ON' : '🔇 OFF', soundToggle.x + soundToggle.width / 2, soundToggle.y + soundToggle.height / 2); ctx.textBaseline = 'alphabetic'; }
-                    if (refs.gameState === 'start' && !refs.showSettings) { const gradient = ctx.createRadialGradient(200, 300, 50, 200, 300, 300); gradient.addColorStop(0, 'rgba(138, 43, 226, 0.3)'); gradient.addColorStop(1, 'rgba(0, 0, 0, 0)'); ctx.fillStyle = gradient; ctx.fillRect(0, 0, canvas.width, canvas.height); const titleY = 200 + Math.sin(time * 2) * 8; ctx.shadowBlur = 30; ctx.shadowColor = '#ff00ff'; ctx.fillStyle = '#fff'; ctx.font = 'bold 72px Arial'; ctx.textAlign = 'center'; ctx.fillText('BOINK!', 200, titleY); ctx.shadowBlur = 0; const pulseAlpha = 0.5 + Math.sin(time * 3) * 0.3; ctx.fillStyle = `rgba(255, 255, 255, ${pulseAlpha})`; ctx.font = 'bold 24px Arial'; ctx.fillText('TAP TO START', 200, 400); if (refs.highScore > 0) { ctx.fillStyle = '#ffd700'; ctx.font = 'bold 18px Arial'; ctx.fillText(`★ BEST: ${refs.highScore} ★`, 200, 480); } }
-                    if (refs.gameState === 'playing') { 
-                        particlesRef.current.forEach(p => { ctx.fillStyle = p.color; ctx.globalAlpha = p.life; ctx.beginPath(); ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2); ctx.fill(); }); 
-                        ctx.globalAlpha = 1; 
-                        ctx.fillStyle = 'rgba(255, 255, 255, 0.9)'; 
-                        ctx.font = 'bold 24px Arial'; 
-                        ctx.textAlign = 'left'; 
-                        ctx.fillText(`Score: ${refs.score}`, 15, 35); 
-                        ctx.font = 'bold 16px Arial'; 
-                        ctx.fillStyle = 'rgba(255, 255, 255, 0.7)'; 
-                        ctx.fillText(`Best: ${refs.highScore}`, 15, 60); 
-                        
-                        // Draw the ball
-                        ctx.fillStyle = '#fff'; 
-                        ctx.beginPath(); 
-                        ctx.arc(ball.x, ball.y, ball.radius, 0, Math.PI * 2); 
-                        ctx.fill(); 
-                        
-                        // Create a radial gradient for the hit zone
-                        const hitZoneGradient = ctx.createRadialGradient(ball.x, ball.y, ball.radius, ball.x, ball.y, refs.hitZone);
-                        hitZoneGradient.addColorStop(0, 'rgba(147, 112, 219, 0)'); // Transparent near the ball
-                        hitZoneGradient.addColorStop(0.8, 'rgba(147, 112, 219, 0.4)'); // Faint purple towards the edge
-                        hitZoneGradient.addColorStop(1, 'rgba(147, 112, 219, 0)'); // Fades to transparent at the very edge
 
-                        // Apply the gradient and draw the circle
-                        ctx.fillStyle = hitZoneGradient;
-                        ctx.beginPath();
-                        ctx.arc(ball.x, ball.y, refs.hitZone, 0, Math.PI * 2);
-                        ctx.fill();
+                    const transition = transitionRef.current;
+                    if (transition.active) {
+                        transition.opacity -= 0.05 * speedFactor;
+                        if (transition.opacity < 1 && !transition.isStateUpdated) {
+                            const newLevel = parseInt(transition.levelText.split(' ')[1]);
+                            setLevel(newLevel);
+                            setGravity(g => Math.min(1.0, g * 1.15));
+                            ballRef.current = { x: 200, y: 100, vx: 0, vy: 0, radius: Math.max(10, ballRef.current.radius * 0.95) };
+                            transition.isStateUpdated = true;
+                        }
+                        
+                        const flashOpacity = Math.max(0, 1 - Math.abs(transition.opacity - 1));
+                        ctx.fillStyle = `rgba(255, 255, 255, ${flashOpacity})`;
+                        ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+                        if (flashOpacity > 0.5) {
+                            ctx.fillStyle = `rgba(0, 0, 0, ${flashOpacity})`;
+                            ctx.font = 'bold 60px Arial';
+                            ctx.textAlign = 'center';
+                            ctx.fillText(transition.levelText, 200, 300);
+                        }
+
+                        if (transition.opacity <= 0) {
+                            transition.active = false;
+                            transition.isStateUpdated = false;
+                        }
+                    } else {
+                        // --- NORMAL GAME LOGIC ---
+                        const ball = ballRef.current;
+                        if (refs.gameState === 'playing') {
+                            ball.vy += refs.gravity * speedFactor;
+                            ball.x += ball.vx * speedFactor;
+                            ball.y += ball.vy * speedFactor;
+                            ball.vx *= Math.pow(0.99, speedFactor);
+                            ball.vy *= Math.pow(0.995, speedFactor);
+
+                            if (ball.x < ball.radius || ball.x > canvas.width - ball.radius) { ball.vx *= -0.7; ball.x = Math.max(ball.radius, Math.min(canvas.width - ball.radius, ball.x)); createSparkles(ball.x, ball.y, 5); }
+                            if (ball.y - ball.radius > canvas.height && !gameOverTriggered) { gameOverTriggered = true; stopBackgroundMusic(); if (refs.score > refs.highScore) { setHighScore(refs.score); localStorage.setItem('bounceGameHighScore', refs.score.toString()); } setGameState('gameover'); }
+                        }
+                        const particles = particlesRef.current;
+                        for (let i = particles.length - 1; i >= 0; i--) { const p = particles[i]; p.x += p.vx * speedFactor; p.y += p.vy * speedFactor; p.vy += 0.15 * speedFactor; p.life -= 0.02 * speedFactor; if (p.life <= 0) { particles.splice(i, 1); } }
+
+                        // --- DRAWING ---
+                        if (refs.gameState !== 'playing') { ctx.fillStyle = 'rgba(255, 255, 255, 0.5)'; ctx.font = 'bold 30px Arial'; ctx.textAlign = 'center'; ctx.fillText('⚙️', 370, 35); }
+                        if (refs.showSettings && refs.gameState !== 'playing') { ctx.fillStyle = 'rgba(0, 0, 0, 0.85)'; ctx.fillRect(30, 80, 340, 360); ctx.fillStyle = '#fff'; ctx.font = 'bold 24px Arial'; ctx.textAlign = 'center'; ctx.fillText('SETTINGS', 200, 120); const drawSlider = (label, value, sliderKey) => { const slider = settingsRef.current.sliders[sliderKey]; const { x, y, width, min, max } = slider; ctx.fillStyle = '#fff'; ctx.font = 'bold 16px Arial'; ctx.textAlign = 'left'; ctx.fillText(`${label}: ${value.toFixed(sliderKey === 'gravity' ? 2 : 0)}${sliderKey === 'hitZone' ? 'px' : ''}`, x, y - 10); ctx.fillStyle = 'rgba(255, 255, 255, 0.3)'; ctx.fillRect(x, y, width, 6); const handleX = x + ((value - min) / (max - min)) * width; ctx.fillStyle = '#fff'; ctx.beginPath(); ctx.arc(handleX, y + 3, 12, 0, Math.PI * 2); ctx.fill(); }; drawSlider('Gravity', refs.gravity, 'gravity'); drawSlider('Hit Force', refs.hitForce, 'hitForce'); drawSlider('Hit Zone', refs.hitZone, 'hitZone'); const soundToggle = settingsRef.current.soundToggle; ctx.fillStyle = refs.soundEnabled ? '#10b981' : '#ef4444'; ctx.fillRect(soundToggle.x, soundToggle.y, soundToggle.width, soundToggle.height); ctx.fillStyle = '#fff'; ctx.font = 'bold 16px Arial'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText(refs.soundEnabled ? '🔊 ON' : '🔇 OFF', soundToggle.x + soundToggle.width / 2, soundToggle.y + soundToggle.height / 2); ctx.textBaseline = 'alphabetic'; }
+                        if (refs.gameState === 'start' && !refs.showSettings) { const gradient = ctx.createRadialGradient(200, 300, 50, 200, 300, 300); gradient.addColorStop(0, 'rgba(138, 43, 226, 0.3)'); gradient.addColorStop(1, 'rgba(0, 0, 0, 0)'); ctx.fillStyle = gradient; ctx.fillRect(0, 0, canvas.width, canvas.height); const titleY = 200 + Math.sin(time * 2) * 8; ctx.shadowBlur = 30; ctx.shadowColor = '#ff00ff'; ctx.fillStyle = '#fff'; ctx.font = 'bold 72px Arial'; ctx.textAlign = 'center'; ctx.fillText('BOINK!', 200, titleY); ctx.shadowBlur = 0; const pulseAlpha = 0.5 + Math.sin(time * 3) * 0.3; ctx.fillStyle = `rgba(255, 255, 255, ${pulseAlpha})`; ctx.font = 'bold 24px Arial'; ctx.fillText('TAP TO START', 200, 400); if (refs.highScore > 0) { ctx.fillStyle = '#ffd700'; ctx.font = 'bold 18px Arial'; ctx.fillText(`★ BEST: ${refs.highScore} ★`, 200, 480); } }
+                        if (refs.gameState === 'playing') { particlesRef.current.forEach(p => { ctx.fillStyle = p.color; ctx.globalAlpha = p.life; ctx.beginPath(); ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2); ctx.fill(); }); ctx.globalAlpha = 1; ctx.fillStyle = 'rgba(255, 255, 255, 0.9)'; ctx.font = 'bold 24px Arial'; ctx.textAlign = 'left'; ctx.fillText(`Score: ${refs.score}`, 15, 35); ctx.font = 'bold 16px Arial'; ctx.fillStyle = 'rgba(255, 255, 255, 0.7)'; ctx.fillText(`Best: ${refs.highScore}`, 15, 60); ctx.textAlign = 'right'; ctx.fillText(`Level: ${refs.level}`, canvas.width - 15, 35); ctx.textAlign = 'left'; ctx.fillStyle = '#fff'; ctx.beginPath(); ctx.arc(ball.x, ball.y, ball.radius, 0, Math.PI * 2); ctx.fill(); const hitZoneGradient = ctx.createRadialGradient(ball.x, ball.y, ball.radius, ball.x, ball.y, refs.hitZone); hitZoneGradient.addColorStop(0, 'rgba(147, 112, 219, 0)'); hitZoneGradient.addColorStop(0.8, 'rgba(147, 112, 219, 0.4)'); hitZoneGradient.addColorStop(1, 'rgba(147, 112, 219, 0)'); ctx.fillStyle = hitZoneGradient; ctx.beginPath(); ctx.arc(ball.x, ball.y, refs.hitZone, 0, Math.PI * 2); ctx.fill(); }
+                        if (refs.gameState === 'gameover' && !refs.showSettings) { const gradient = ctx.createRadialGradient(200, 300, 50, 200, 300, 400); gradient.addColorStop(0, 'rgba(139, 0, 0, 0.5)'); gradient.addColorStop(1, 'rgba(0, 0, 0, 0.8)'); ctx.fillStyle = gradient; ctx.fillRect(0, 0, canvas.width, canvas.height); ctx.shadowBlur = 30; ctx.shadowColor = '#ff0000'; ctx.fillStyle = '#ff4444'; ctx.font = 'bold 56px Arial'; ctx.textAlign = 'center'; ctx.fillText('GAME', 200, 180); ctx.fillText('OVER', 200, 240); ctx.shadowBlur = 0; ctx.fillStyle = '#fff'; ctx.font = 'bold 36px Arial'; ctx.fillText(`${refs.score}`, 200, 315); if (refs.score === refs.highScore && refs.score > 0) { ctx.shadowBlur = 20; ctx.shadowColor = '#ffd700'; ctx.font = 'bold 28px Arial'; ctx.fillStyle = '#ffd700'; const starY = 360 + Math.sin(time * 4) * 3; ctx.fillText('★ NEW RECORD! ★', 200, starY); ctx.shadowBlur = 0; } else if (refs.highScore > 0) { ctx.font = '22px Arial'; ctx.fillStyle = 'rgba(255, 255, 255, 0.7)'; ctx.fillText(`Best: ${refs.highScore}`, 200, 370); } const continueAlpha = 0.6 + Math.sin(time * 3) * 0.3; ctx.font = 'bold 22px Arial'; ctx.fillStyle = `rgba(255, 255, 255, ${continueAlpha})`; ctx.fillText('TAP TO CONTINUE', 200, 480); }
                     }
-                    if (refs.gameState === 'gameover' && !refs.showSettings) { const gradient = ctx.createRadialGradient(200, 300, 50, 200, 300, 400); gradient.addColorStop(0, 'rgba(139, 0, 0, 0.5)'); gradient.addColorStop(1, 'rgba(0, 0, 0, 0.8)'); ctx.fillStyle = gradient; ctx.fillRect(0, 0, canvas.width, canvas.height); ctx.shadowBlur = 30; ctx.shadowColor = '#ff0000'; ctx.fillStyle = '#ff4444'; ctx.font = 'bold 56px Arial'; ctx.textAlign = 'center'; ctx.fillText('GAME', 200, 180); ctx.fillText('OVER', 200, 240); ctx.shadowBlur = 0; ctx.fillStyle = '#fff'; ctx.font = 'bold 36px Arial'; ctx.fillText(`${refs.score}`, 200, 315); if (refs.score === refs.highScore && refs.score > 0) { ctx.shadowBlur = 20; ctx.shadowColor = '#ffd700'; ctx.font = 'bold 28px Arial'; ctx.fillStyle = '#ffd700'; const starY = 360 + Math.sin(time * 4) * 3; ctx.fillText('★ NEW RECORD! ★', 200, starY); ctx.shadowBlur = 0; } else if (refs.highScore > 0) { ctx.font = '22px Arial'; ctx.fillStyle = 'rgba(255, 255, 255, 0.7)'; ctx.fillText(`Best: ${refs.highScore}`, 200, 370); } const continueAlpha = 0.6 + Math.sin(time * 3) * 0.3; ctx.font = 'bold 22px Arial'; ctx.fillStyle = `rgba(255, 255, 255, ${continueAlpha})`; ctx.fillText('TAP TO CONTINUE', 200, 480); }
                 
                     animationId = requestAnimationFrame(gameLoop);
                 };
